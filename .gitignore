@@ -194,5 +194,5 @@ cython_debug/
 .cursorindexingignore
 
 # data
-.data/wsi_analysis_demo.svs
-.data/wsi_unbiased_analysis_demo.svs
+data/wsi_analysis_demo.svs
+data/wsi_unbiased_analysis_demo.svs
