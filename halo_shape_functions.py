@@ -7,18 +7,18 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="albumentations")
 
 
-#Path to the openslide binary. Version used can be downloaded at: https://github.com/openslide/openslide-bin/releases/tag/v20230414
-#Optional: Modify OPENSLIDE_PATH to point to the location of openslide-win64-20230414\bin 
-#The path can also be read from a config file, etc.
-OPENSLIDE_PATH = None 
-
-if OPENSLIDE_PATH is not None:
-    if hasattr(os, 'add_dll_directory'):
-        # Python >= 3.8 on Windows
-        with os.add_dll_directory(OPENSLIDE_PATH):
-            import openslide
-else:
-    import openslide
+##Path to the openslide binary. Version used can be downloaded at: https://github.com/openslide/openslide-bin/releases/tag/v20230414
+##Optional: Modify OPENSLIDE_PATH to point to the location of openslide-win64-20230414\bin 
+##The path can also be read from a config file, etc.
+#OPENSLIDE_PATH = None 
+#
+#if OPENSLIDE_PATH is not None:
+#    if hasattr(os, 'add_dll_directory'):
+#        # Python >= 3.8 on Windows
+#        with os.add_dll_directory(OPENSLIDE_PATH):
+#            import openslide
+#else:
+#    import openslide
 
 
 
@@ -30,7 +30,7 @@ import numpy as np
 from pathlib import Path
 
 import xml.etree.ElementTree as ET
-import openslide
+#import openslide
 from pathlib import WindowsPath
 import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, MultiPolygon
@@ -61,16 +61,13 @@ import shapely
 from shapely import MultiPolygon, Polygon, make_valid
 from shapely.ops import unary_union, nearest_points
 
-import geopandas as gpd
-
 from tiatoolbox.wsicore.wsireader import WSIReader
 from tiatoolbox.tools.tissuemask import MorphologicalMasker
-from skimage import color, exposure, measure, morphology
+from skimage import color, exposure
 from scipy import ndimage
 import skimage.transform as st
 
 from tiatoolbox.tools.registration.wsi_registration import (
-    AffineWSITransformer,
     DFBRegister,
     apply_bspline_transform,
     estimate_bspline_transform,
@@ -199,181 +196,6 @@ def convert_HALO_regions_to_multipolygon(regions):
     # pretty sure the make_valid here cuts holes into larger polygons if smaller ones are on top, not necessarily a problem atm?
     return shapely.make_valid(shapely.MultiPolygon(polygons))
 
-# write a function that takes:
-# 1. halo image id
-# 2. 'true' layer
-# 3. layer to compare to true
-# 4. layer for regions to compare
-# and then provides scores (and a tf/fp/tn/fn mask on top of the image?)
-
-def halo_get_layer_metrics(client, image_id, true_layer_name, comparison_layer_name, where_to_compare=None):
-    """Function that gets metrics for an image on halo with the annotations in different annotation layers of that image.
-    
-    Keyword arguments:
-    image_id -- HALO image id
-
-    true_layer_name -- annotation layer name/id for the image in HALO which will be considered 'true' in the comparison metrics
-
-    comparison_layer_name -- annotation layer name/id for the image in HALO we are comparing to the 'true' layer
-    
-    where_to_compare -- annotation layer name/id for the image in HALO to reduce the regions we are comparing just to those in this layer
-
-    NOTE: all layer names fetch the most recently made layer with that name if there are multiple names!
-    """
-    # get the annotation layer ids
-    true_layer_id = client.search_for_annotation_layer_ids(image_id, true_layer_name)['id']
-    comparison_layer_id = client.search_for_annotation_layer_ids(image_id, comparison_layer_name)['id']
-    if where_to_compare:
-        where_layer_id = client.search_for_annotation_layer_ids(image_id, where_to_compare)['id']
-
-    # get the multipolygons for these regions
-    true = convert_HALO_regions_to_multipolygon(client.get_annotation_layer_regions(true_layer_id)['annotationLayerById']['regions'])
-    comparison = convert_HALO_regions_to_multipolygon(client.get_annotation_layer_regions(comparison_layer_id)['annotationLayerById']['regions'])
-    if where_to_compare:
-        where = convert_HALO_regions_to_multipolygon(client.get_annotation_layer_regions(where_layer_id)['annotationLayerById']['regions'])
-
-    # make the shapes valid
-    true = shapely.make_valid(true)
-    comparison = shapely.make_valid(comparison)
-    if where_to_compare:
-        where = shapely.make_valid(where)
-
-    # update this to use xmin ymin eventually
-    all_points = np.empty((0, 2))
-    if where_to_compare:
-        for geom in list(where.geoms):
-            all_points = np.append(all_points, np.array(geom.exterior.coords), axis=0)
-    else:
-        for geom in list(true.geoms):
-            all_points = np.append(all_points, np.array(geom.exterior.coords), axis=0)
-        for geom in list(comparison.geoms):
-            all_points = np.append(all_points, np.array(geom.exterior.coords), axis=0)
-    xmin, ymin = all_points.min(axis=0)
-    xmax, ymax = all_points.max(axis=0)
-    im_size = (math.ceil(ymax), math.ceil(xmax))
-
-    # this can be greatly increased in speed if we kept the mask bounded to the shape, instead of having a bunch of 
-    # blank space up till the shapes
-    true_mask = multipolygon_mask(true, im_size)
-    comparison_mask = multipolygon_mask(comparison, im_size)
-    if where_to_compare:
-        where_mask = multipolygon_mask(where, im_size)
-
-    if where_to_compare:
-        metrics = get_metrics(true_mask, comparison_mask, where_mask)
-        multipolygons = [true, comparison, where]
-    else:
-        metrics = get_metrics(true_mask, comparison_mask)
-        multipolygons = [true, comparison]
-
-
-    return {'metrics':metrics, 'multipolygons':multipolygons}
-
-# Plots a Polygon to pyplot `ax`
-def plot_polygon(ax, poly, **kwargs):
-    path = mPath.make_compound_path(
-        mPath(np.asarray(poly.exterior.coords)[:, :2]),
-        *[mPath(np.asarray(ring.coords)[:, :2]) for ring in poly.interiors])
-
-    patch = PathPatch(path, **kwargs)
-    collection = PatchCollection([patch], **kwargs)
-    
-    ax.add_collection(collection, autolim=True)
-    ax.autoscale_view()
-    return collection
-
-# gets a collection of patches to plot from a polygon
-def get_polygon_collection(poly, **kwargs):
-    path = mPath.make_compound_path(
-        mPath(np.asarray(poly.exterior.coords)[:, :2]),
-        *[mPath(np.asarray(ring.coords)[:, :2]) for ring in poly.interiors])
-
-    patch = PathPatch(path, **kwargs)
-    collection = PatchCollection([patch], **kwargs)
-    return collection
-
-def display_image_in_actual_size(image, dpi=mpl.rcParams['figure.dpi']):
-    im_data = image
-    height, width = im_data.size
-
-    # What size does the figure need to be in inches to fit the image?
-    figsize = width / float(dpi), height / float(dpi)
-
-    # Create a figure of the right size with one axes that takes up the full figure
-    fig = plt.figure(figsize=figsize)
-    ax = fig.add_axes([0, 0, 1, 1])
-
-    # Hide spines, ticks, etc.
-    ax.axis('off')
-
-    # Display the image.
-    ax.imshow(im_data, interpolation='none')
-
-    return fig, ax
-
-def multipolygon_to_polygon_list(multipolygon):
-    """Converts a multipolygon into a list of polygons."""
-    # get polygons in a list
-    polygons = list(multipolygon.geoms)
-    all_polygons = False
-    while all_polygons == False:
-        all_polygons = True
-        for polygon in polygons.copy():
-            if type(polygon) == shapely.MultiPolygon:
-                polygons.extend(list(polygon.geoms))
-                polygons.remove(polygon)
-                all_polygons = False
-            elif type(polygon) != shapely.Polygon:
-                polygons.remove(polygon)
-                all_polygons = False
-    return polygons
-
-
-def mask_for_polygons(polygons, im_size, cutouts = None, verbose=False):
-    """Convert a polygon or multipolygon list back to
-       an image mask ndarray
-       
-       This is pretty slow because of the cutouts section.
-
-       NOTE: THIS DOESN'T TAKE INTO ACCOUNT REGIONS THAT MIGHT BE LAYERED WITHIN EACHOTHER MORE THAN ONCE
-       For instance, if there is a region of mask, and then a cutout, and then a region of mask again, and then a cutout in that second region of mask, the cutout will not show.
-        This can probably be fixed with recursion (or even just a while loop), but I have not a brain for that.
-       """
-    img_mask = np.zeros(im_size, np.uint8)
-    if not polygons:
-        return img_mask
-    # function to round and convert to int
-    int_coords = lambda x: np.array(x).round().astype(np.int32)
-    mask_exteriors = [int_coords(poly.exterior.coords) for poly in polygons]
-    interiors = [int_coords(pi.coords) for poly in polygons
-                 for pi in poly.interiors]
-    cv2.fillPoly(img_mask, mask_exteriors, 1)
-    cv2.fillPoly(img_mask, interiors, 1)
-
-    # remove any cutouts from the mask
-    if cutouts:
-        exteriors = [int_coords(poly.exterior.coords) for poly in cutouts]
-        interiors = [int_coords(pi.coords) for poly in cutouts
-                    for pi in poly.interiors]
-        
-        # checking every exterior cutout for mask regions within them
-        # this is the part that needs loopification/recursification
-        re_add = []
-        for cutout in exteriors:
-            cutout = Polygon(cutout)
-            for mask_polygon in mask_exteriors:
-                mask_polygonn = Polygon(mask_polygon)
-                if cutout.contains(mask_polygonn):
-                    re_add.append(mask_polygon)
-
-        # remove cutouts from the mask regions
-        cv2.fillPoly(img_mask, exteriors, 0)
-        cv2.fillPoly(img_mask, interiors, 0)
-        # fill in mask regions that were inside cutouts
-        cv2.fillPoly(img_mask, re_add, 1)
-
-    return img_mask
-
 
 
 def get_metrics(input_mask, output_mask, metric_area_mask = None):
@@ -440,131 +262,6 @@ def get_metrics(input_mask, output_mask, metric_area_mask = None):
     fpr = fp/(fp+tn)
 
     return {"accuracy":accuracy, "precision":precision, "recall":recall, "f1":f1, "jaccard":jaccard, "fpr":fpr}
-
-def get_shape_areas(client, image, annotation_layer_name, bounding_annotation_layer_name=None):
-    """Gets all the total area in mm^2 for the shapes in the provided annotation layer.
-
-    If a bounding annotation layer is provided, only shape regions within this additional bounding annotation
-    layer are counted towards the total. If half of a shape is in, and half is out, only the half that is in
-    is counted.
-
-    Parameters:
-    client - OIDCClient, object returned from connect(HOSTNAME, CLIENT_ID)
-    image - str, search string for a slide on HALO (can be an id, file name, etc). Errors if not found.
-    annotation_layer_name - str, search string for the annotation layer on the image. Errors if not found.
-    bounding_annotation_layer_name - str, None by default, search string for the bounding annotation layer. Errors if not found.
-    """
-
-    # searches for an image
-    image_info = client.search_for_image_id(image)
-
-    # get image location
-    img_location = Path(image_info['location'])
-    assert img_location.exists()
-    # load image w/ tiatoolbox to get micrometers per pixel
-    wsi = WSIReader.open(img_location)
-    x_mpp, y_mpp = wsi.info.mpp
-    # moving away from openslide, as it takes forever to load i think
-    #openslide_slide = openslide.OpenSlide(img_location)
-    #x_mpp, y_mpp = float(openslide_slide.properties.get('openslide.mpp-x')), float(openslide_slide.properties.get('openslide.mpp-y'))
-    assert x_mpp == y_mpp, f"x and y micrometers per pixel aren't equal! {x_mpp=} {y_mpp=}"
-    micrometers_per_pixel = x_mpp
-
-    # get metrics
-    to_get_area_layer = client.search_for_annotation_layer_ids(image_info['id'], annotation_layer_name)
-    if bounding_annotation_layer_name:
-        bounding_layer = client.search_for_annotation_layer_ids(image_info['id'], bounding_annotation_layer_name)
-
-    halo_regions = client.get_annotation_layer_regions(to_get_area_layer['id'])['annotationLayerById']['regions']
-    regions_multipolygon = convert_HALO_regions_to_multipolygon(halo_regions)
-
-    if bounding_annotation_layer_name:
-        boundary_regions = client.get_annotation_layer_regions(bounding_layer['id'])['annotationLayerById']['regions']
-        boundary_multipolygon = convert_HALO_regions_to_multipolygon(boundary_regions)
-        regions_multipolygon = regions_multipolygon.intersection(boundary_multipolygon)
-
-    # get area in micrometers^2 and mm^2
-    micrometers_sq = micrometers_per_pixel**2 * regions_multipolygon.area
-    mm_sq = micrometers_sq / 1000000
-
-    return mm_sq
-
-def save_small_mask(mask, folder, prefix = "", ratio = 0.33):
-    """ Save a small version of a mask.
-    NOTE: MAKES A COPY OF THE MASK!
-    """
-    to_save = mask.copy()
-    to_save[to_save == 1] = 255
-    im = Image.fromarray(to_save)
-    im.thumbnail((int(mask.shape[0]*ratio), int(mask.shape[1]*ratio)))
-    im.save(f'{folder}/{prefix}_mask.png', "PNG")
-    del(to_save)
-    del(im)
-
-def grid_fill_polygon(polygon, side_length, gap_size):
-    """ Fills a rectangle polygon with squares (side_length x side_length),
-    with gaps the sieze of gap_size.
-
-    polygon: Polygon (from shapely.geometry), Polygon to fill with squares
-        NOTE!!! Make sure the Polygon has its points starting with the top left most point on a screen,
-        going clockwise (topleft, topright, bottomright, bottomleft)
-    side_length: int, side length of the squares to fill with
-    gap_size: int, size of gap between all of the squares
-    """
-    # only works if the coordinates are set up in this exact order (direction and starting coordinates matter)
-    height = polygon.exterior.coords.xy[1][2] - polygon.exterior.coords.xy[1][1]
-    width = polygon.exterior.coords.xy[0][1] - polygon.exterior.coords.xy[0][0]
-
-    # get the number of full squares
-    n_rows_full_squares = (height - gap_size) // (side_length + gap_size)
-    n_cols_full_squares = (width - gap_size) // (side_length + gap_size)
-
-
-    # add single gap as start
-    current_x_left = polygon.exterior.coords.xy[0][0] + gap_size
-    current_y_top = polygon.exterior.coords.xy[1][0] + gap_size
-
-    current_x_right = polygon.exterior.coords.xy[0][1] - gap_size
-    current_y_bottom = polygon.exterior.coords.xy[1][2] - gap_size
-
-    grid_of_polygons = []
-    # for each column
-    for col_n in range(int(n_cols_full_squares)):
-        # for each row
-        for row_n in range(int(n_rows_full_squares)):
-            # make a square
-            top_left = (current_x_left + side_length*col_n + gap_size*col_n, current_y_top + side_length*row_n + gap_size*row_n)
-            top_right = (current_x_left + (side_length*(col_n + 1)) + gap_size*col_n, current_y_top + side_length*row_n + gap_size*row_n)
-            bottom_right = (current_x_left + (side_length*(col_n + 1)) + gap_size*col_n, current_y_top + (side_length*(row_n + 1)) + gap_size*row_n)
-            bottom_left = (current_x_left + side_length*col_n + gap_size*col_n, current_y_top + (side_length*(row_n + 1)) + gap_size*row_n)
-            grid_of_polygons.append(Polygon([top_left, top_right, bottom_right, bottom_left]))
-            
-    # get last not squares
-    # right hand side squares
-    col_n = int(n_cols_full_squares)
-    for row_n in range(int(n_rows_full_squares)):
-        top_left = (current_x_left + side_length*col_n + gap_size*col_n, current_y_top + side_length*row_n + gap_size*row_n)
-        top_right = (current_x_right, current_y_top + side_length*row_n + gap_size*row_n)
-        bottom_right = (current_x_right, current_y_top + (side_length*(row_n + 1)) + gap_size*row_n)
-        bottom_left = (current_x_left + side_length*col_n + gap_size*col_n, current_y_top + (side_length*(row_n + 1)) + gap_size*row_n)
-        grid_of_polygons.append(Polygon([top_left, top_right, bottom_right, bottom_left]))
-    # bottom squares
-    row_n = int(n_rows_full_squares)
-    for col_n in range(int(n_cols_full_squares)):
-        top_left = (current_x_left + side_length*col_n + gap_size*col_n, current_y_top + side_length*row_n + gap_size*row_n)
-        top_right = (current_x_left + (side_length*(col_n + 1)) + gap_size*col_n, current_y_top + side_length*row_n + gap_size*row_n)
-        bottom_right = (current_x_left + (side_length*(col_n + 1)) + gap_size*col_n, current_y_bottom)
-        bottom_left = (current_x_left + side_length*col_n + gap_size*col_n, current_y_bottom)
-        grid_of_polygons.append(Polygon([top_left, top_right, bottom_right, bottom_left]))
-    # bottom right square
-    col_n = int(n_cols_full_squares)
-    row_n = int(n_rows_full_squares)
-    top_left = (current_x_left + side_length*col_n + gap_size*col_n, current_y_top + side_length*row_n + gap_size*row_n)
-    top_right = (current_x_right, current_y_top + side_length*row_n + gap_size*row_n)
-    bottom_right = (current_x_right, current_y_bottom)
-    bottom_left = (current_x_left + side_length*col_n + gap_size*col_n, current_y_bottom)
-    grid_of_polygons.append(Polygon([top_left, top_right, bottom_right, bottom_left]))
-    return grid_of_polygons
 
 def simplify_and_smooth(polygon, mitre_distance=10, thinness_distance=25, first_simplify=5, second_simplify=3):
     """Simplifies, smooths, and then checks for tight regions on the shape(s) and separates them further.
@@ -814,312 +511,6 @@ def find_best_slice(polygon, cut_size, tests, minimum_shape_area, maximum_shape_
             return vert_polygon
         else:
             return horiz_polygon
-        
-
-def warpAffinePadded(
-        src, dst, M,
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=0):
-    """Performs an affine or Euclidean/rigid warp with padding.
-
-    Parameters
-    ----------
-    src : array_like
-        source image, to be warped.
-    dst : array_like
-        destination image, to be padded.
-    M : array_like
-        `2x3` affine transformation matrix.
-
-    Returns
-    -------
-    src_warped : ndarray
-        padded and warped source image
-    dst_padded : ndarray
-        padded destination image, same size as src_warped
-
-    Optional Parameters
-    -------------------
-    flags : int, optional
-        combination of interpolation methods (`cv2.INTER_LINEAR` or
-        `cv2.INTER_NEAREST`) and the optional flag `cv2.WARP_INVERSE_MAP`,
-        that sets `M` as the inverse transformation (`dst` --> `src`).
-    borderMode : int, optional
-        pixel extrapolation method (`cv2.BORDER_CONSTANT` or
-        `cv2.BORDER_REPLICATE`).
-    borderValue : numeric, optional
-        value used in case of a constant border; by default, it equals 0.
-
-    See Also
-    --------
-    warpPerspectivePadded() : for `3x3` perspective transformations
-    cv2.warpPerspective(), cv2.warpAffine() : original OpenCV functions
-    # https://stackoverflow.com/questions/44457064/displaying-stitched-images-together-without-cutoff-using-warpaffine
-    # https://github.com/alkasm/padded-transformations/blob/master/padtransf/__init__.py
-    # this is amazing, send thanks to the stranger
-    """
-    assert M.shape == (2, 3), \
-        'Affine transformation shape should be (2, 3).\n' \
-        + 'Use warpPerspectivePadded() for (3, 3) homography transformations.'
-
-    if flags in (cv2.WARP_INVERSE_MAP,
-                 cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP,
-                 cv2.INTER_NEAREST + cv2.WARP_INVERSE_MAP):
-        M = cv2.invertAffineTransform(M)
-        flags -= cv2.WARP_INVERSE_MAP
-
-    # it is enough to find where the corners of the image go to find
-    # the padding bounds; points in clockwise order from origin
-    src_h, src_w = src.shape[:2]
-    lin_pts = np.array([
-        [0, src_w, src_w, 0],
-        [0, 0, src_h, src_h]])
-
-    # transform points
-    transf_lin_pts = M[:, :2].dot(lin_pts) + M[:, 2].reshape(2, 1)
-
-    # find min and max points
-    min_x = np.floor(np.min(transf_lin_pts[0])).astype(int)
-    min_y = np.floor(np.min(transf_lin_pts[1])).astype(int)
-    max_x = np.ceil(np.max(transf_lin_pts[0])).astype(int)
-    max_y = np.ceil(np.max(transf_lin_pts[1])).astype(int)
-
-    # add translation to the transformation matrix to shift to positive values
-    anchor_x, anchor_y = 0, 0
-    if min_x < 0:
-        anchor_x = -min_x
-    if min_y < 0:
-        anchor_y = -min_y
-    shifted_transf = M + [[0, 0, anchor_x], [0, 0, anchor_y]]
-
-    # create padded destination image
-    dst_h, dst_w = dst.shape[:2]
-
-    pad_widths = [anchor_y, max(max_y, dst_h) - dst_h,
-                  anchor_x, max(max_x, dst_w) - dst_w]
-
-    dst_padded = cv2.copyMakeBorder(dst, *pad_widths,
-                                    borderType=borderMode, value=borderValue)
-
-    dst_pad_h, dst_pad_w = dst_padded.shape[:2]
-    src_warped = cv2.warpAffine(
-        src, shifted_transf, (dst_pad_w, dst_pad_h),
-        flags=flags, borderMode=borderMode, borderValue=borderValue)
-
-    return dst_padded, src_warped
-
-
-def dfbr_get_registration(fixed: WSIReader,
-                          moving: WSIReader,
-                          thumbnail_resolution: float,
-                          search_for_tissue: bool = False,
-                          plot: bool = False,
-                          masker = MorphologicalMasker(min_region_size=3000),
-                          registration_masks: dict = {}):
-    """Deep Feature Based Registration using TIAToolbox from U Warwick.
-
-    Args:
-        fixed (:class:`tiatoolbox.wsicore.wsireader.WSIReader`):
-            WSIReader of the fixed image
-        moving (:class:`tiatoolbox.wsicore.wsireader.WSIReader`):
-            WSIReader of the moving image
-        thumbnail_resolution (:class:`float`):
-            resolution of the thumnbail used to register
-        search_for_tissue (:class:`bool`):
-            whether or not to search for tissue sections within
-            the slide to register to
-        plot (:class:`bool`):
-            whether or not to plot the registration output
-        masker (:class:`tiatoolbox.tools.tissuemask.MorphologicalMasker`):
-            masker used to mask the tissue region
-        registration_masks (:class:`dict`):
-            the tissue masks for the moving and fixed images. keys should
-            be `moving` and `fixed`
-    
-    Returns:
-        :class:`dict`:
-            dictionary including level0 and thumbnail-level DFBR transformations
-    """
-    ret_dict = {}
-
-    fixed_image_rgb = fixed.slide_thumbnail(resolution=thumbnail_resolution * fixed.info.objective_power, units="power")
-    moving_image_rgb = moving.slide_thumbnail(resolution=thumbnail_resolution * moving.info.objective_power, units="power")
-
-    if plot:
-        _, axs = plt.subplots(1, 2, figsize=(15, 10))
-        axs[0].imshow(fixed_image_rgb, cmap="gray")
-        axs[0].set_title("Fixed Image")
-        axs[1].imshow(moving_image_rgb, cmap="gray")
-        axs[1].set_title("Moving Image")
-        plt.show()
-
-    # preprocessing image
-    def preprocess_image(image: np.ndarray) -> np.ndarray:
-        """Pre-process image for registration using masks.
-
-        This function converts the RGB image to grayscale image and
-        improves the contrast by linearly rescaling the values.
-
-        """
-        image = color.rgb2gray(image)
-        image = exposure.rescale_intensity(
-            image,
-            in_range=tuple(np.percentile(image, (0.5, 99.5))),
-        )
-        image = image * 255
-        return image.astype(np.uint8)
-
-
-    # Preprocessing fixed and moving images
-    fixed_image = preprocess_image(fixed_image_rgb)
-    moving_image = preprocess_image(moving_image_rgb)
-    fixed_image, moving_image = match_histograms(fixed_image, moving_image)
-
-    # Visualising the results
-    if plot:
-        _, axs = plt.subplots(1, 2, figsize=(15, 10))
-        axs[0].imshow(fixed_image, cmap="gray")
-        axs[0].set_title("Fixed Image")
-        axs[1].imshow(moving_image, cmap="gray")
-        axs[1].set_title("Moving Image")
-        plt.show()
-
-
-    # check if there were provided masks
-    if not registration_masks and search_for_tissue:
-        # masking tissue with morphologymasker
-        moving_mask = masker.fit_transform([moving_image_rgb])
-        moving_mask = ndimage.binary_fill_holes(moving_mask[0])
-        moving_mask = moving_mask.astype(np.uint8)
-
-        fixed_mask = masker.fit_transform([fixed_image_rgb])
-        fixed_mask = ndimage.binary_fill_holes(fixed_mask[0])
-        fixed_mask = fixed_mask.astype(np.uint8)
-    elif not registration_masks and not search_for_tissue: # doesn't work right now
-        # make 'masks' that are just all ones (the entire image)
-        moving_mask = np.ones(moving_image.shape) # maybe add a 0 into one of the corners?
-        fixed_mask = np.ones(fixed_image.shape)
-    else:
-        moving_mask = registration_masks['moving']
-        if moving_mask.shape != moving_image.shape:
-            moving_mask = st.resize(moving_mask, moving_image.shape, order=0, preserve_range=True, anti_aliasing=False)
-        fixed_mask = registration_masks['fixed']
-        if fixed_mask.shape != fixed_image.shape:
-            fixed_mask = st.resize(fixed_mask, fixed_image.shape, order=0, preserve_range=True, anti_aliasing=False)
-    # just adding a 0 to the corner of the mask, if the mask is all 1 we get an error
-    moving_mask[0][0] = 0
-    fixed_mask[0][0] = 0
-    if plot and (search_for_tissue or registration_masks):
-        _, axs = plt.subplots(1, 2, figsize=(15, 10))
-        axs[0].imshow(fixed_mask, cmap="gray")
-        axs[0].set_title("Fixed Mask")
-        axs[1].imshow(moving_mask, cmap="gray")
-        axs[1].set_title("Moving Mask")
-        plt.show()
-
-    # dfbr needs 3d image, just repeating the single layer 3 times
-    dfbr_fixed_image = np.repeat(np.expand_dims(fixed_image, axis=2), 3, axis=2)
-    dfbr_moving_image = np.repeat(np.expand_dims(moving_image, axis=2), 3, axis=2)
-
-    # register the images using dfbr
-    dfbr = DFBRegister()
-    dfbr_transform = dfbr.register(
-        dfbr_fixed_image,
-        dfbr_moving_image,
-        fixed_mask,
-        moving_mask,
-    )
-
-    # Visualization
-    if plot:
-        original_moving = cv2.warpAffine(
-            moving_image,
-            np.eye(2, 3),
-            fixed_image.shape[:2][::-1],
-        )
-        dfbr_registered_image = cv2.warpAffine(
-            moving_image,
-            dfbr_transform[0:-1],
-            fixed_image.shape[:2][::-1],
-        )
-
-
-        before_overlay = np.dstack((original_moving, fixed_image, original_moving))
-        dfbr_overlay = np.dstack((dfbr_registered_image, fixed_image, dfbr_registered_image))
-
-        _, axs = plt.subplots(1, 2, figsize=(15, 10))
-        axs[0].imshow(before_overlay, cmap="gray")
-        axs[0].set_title("Overlay Before Registration")
-        axs[1].imshow(dfbr_overlay, cmap="gray")
-        axs[1].set_title("Overlay After DFBR")
-        plt.show()
-
-    # transform the moving mask
-    transformed_moving_mask = cv2.warpAffine(
-        moving_mask,
-        dfbr_transform[0:-1],
-        fixed_image.shape[:2][::-1]
-    )
-
-    transform_level0 = dfbr_transform * [
-        [1, 1, 1/thumbnail_resolution],
-        [1, 1, 1/thumbnail_resolution],
-        [1, 1, 1],
-    ]
-
-    ret_dict['fixed_mask_thumbnail'] = fixed_mask
-    ret_dict['moving_mask_thumbnail'] = moving_mask
-    ret_dict['dfbr_transform_thumbnail'] = dfbr_transform
-    ret_dict['dfbr_transform_level0'] = transform_level0
-    ret_dict['transformed_moving_mask_thumbnail'] = transformed_moving_mask
-    return ret_dict
-
-def bspline_get_registration(fixed: WSIReader,
-                             moving: WSIReader,
-                             bspline_transform_kwargs: dict = dict(
-                                grid_space=150.0,
-                                sampling_percent=0.1
-                             ),
-                             plot: bool = False):
-    """ Generate a b-spline transformation object from two images.
-    """
-    fixed_mask = np.ones(shape=fixed.shape, dtype=int)
-    moving_mask = np.ones(shape=moving.shape, dtype=int)
-    bspline_transform = estimate_bspline_transform(
-        fixed,
-        moving,
-        fixed_mask,
-        moving_mask,
-        **bspline_transform_kwargs
-    )
-
-    bspline_registered_image = apply_bspline_transform(
-        fixed,
-        moving,
-        bspline_transform,
-    )
-
-    if plot:
-        tile_overlay = np.dstack(
-            (moving[:, :, 0], fixed[:, :, 0], moving[:, :, 0]),
-        )
-        bspline_overlay = np.dstack(
-            (
-                bspline_registered_image[:, :, 0],
-                fixed[:, :, 0],
-                bspline_registered_image[:, :, 0],
-            ),
-        )
-
-        _, axs = plt.subplots(1, 2, figsize=(15, 10))
-        axs[0].imshow(tile_overlay, cmap="gray")
-        axs[0].set_title("Before B-spline Transform")
-        axs[1].imshow(bspline_overlay, cmap="gray")
-        axs[1].set_title("After B-spline Transform")
-        plt.show()
-    
-    return bspline_transform
 
 # thank you @StefanBrand_EOX (https://gis.stackexchange.com/questions/333709/inserting-n-points-equally-distributed-into-many-polygons-in-qgis/333822#333822)
 def _get_voronoi_starting_points(polygon: Polygon, point_count: int) -> shapely.geometry.MultiPoint:
@@ -1195,174 +586,6 @@ def spatial_segmentation_brute_force(multipolygon: shapely.geometry.MultiPolygon
         if verbose:
             print('Completed!')
         return final_segments
-
-def create_scope_xml(client, # OIDC client from oidc.py
-        image_id: str,
-        xml_multipolygon: shapely.MultiPolygon,
-        xml_file_name: str,
-        calibration_layer_name: str = "calib",
-        verbose: bool = False,
-        rows_cols: tuple = None):
-    """ Generates an XML file to be imported onto the
-    LMD scope for cutting.
-    """
-    # search for the calibration layer, get layer information (id) 
-    calibration_annotation_layer_info = client.search_for_annotation_layer_ids(image_id, calibration_layer_name)
-    # get regions from calibration layer
-    regions = client.get_annotation_layer_regions(calibration_annotation_layer_info['id'])['annotationLayerById']['regions']
-
-    #CAPTURE COORDINATES FOR CALIBRATION MARKS
-    calib_marks = []
-    for shape in regions:
-        pre_polygon = json.loads(shape['geometry'])['coordinates']
-        calib_marks.append(pre_polygon[0])
-    # sort the calibration marks
-    ## first is the top left, then top right, then bottom right
-    calib_mark_df = pd.DataFrame(calib_marks, columns=['x', 'y'])
-    assert not calib_mark_df.empty, "No calibration marks in annotation layer..."
-    assert calib_mark_df.shape == (3, 2), f"Unexpected number of calibration marks (expects 3, got {calib_mark_df.shape[0]})"
-    # top left
-    top_left = calib_mark_df.sort_values('x', ascending=True).iloc[0, :].to_dict()
-    top_left = (top_left['x'], top_left['y'])
-    # top right
-    ## drop top left
-    calib_mark_df_dropped = calib_mark_df.sort_values('x', ascending=True).drop([0], axis=0).reset_index(drop=True)
-    calib_mark_df_dropped = calib_mark_df_dropped.sort_values('y', ascending=True)
-    ## 0 should be top right, 1 should be bottom right
-    top_right = calib_mark_df_dropped.iloc[0, :].to_dict()
-    top_right = (top_right['x'], top_right['y'])
-    # bottom right
-    bottom_right = calib_mark_df_dropped.iloc[1, :].to_dict()
-    bottom_right = (bottom_right['x'], bottom_right['y'])
-
-    # OPEN XML FILE AND ADD CALIBRATION COORDINATES TO THE TOP OF THE PAGE
-    output = open(xml_file_name, 'w')
-    output.write("<ImageData>")
-    output.write("\n")
-    output.write("<GlobalCoordinates>1</GlobalCoordinates>")
-    output.write("\n")
-    output.write("<X_CalibrationPoint_1>{}</X_CalibrationPoint_1>".format(int(top_left[0])))
-    output.write("\n")
-    output.write("<Y_CalibrationPoint_1>{}</Y_CalibrationPoint_1>".format(int(top_left[1])))
-    output.write("\n")
-    output.write("<X_CalibrationPoint_2>{}</X_CalibrationPoint_2>".format(int(top_right[0])))
-    output.write("\n")
-    output.write("<Y_CalibrationPoint_2>{}</Y_CalibrationPoint_2>".format(int(top_right[1])))
-    output.write("\n")
-    output.write("<X_CalibrationPoint_3>{}</X_CalibrationPoint_3>".format(int(bottom_right[0])))
-    output.write("\n")
-    output.write("<Y_CalibrationPoint_3>{}</Y_CalibrationPoint_3>".format(int(bottom_right[1])))
-    output.write("\n")
-
-    if type(xml_multipolygon) == gpd.GeoSeries:
-        assert rows_cols != None, 'If providing a GeoSeries (spatially resolved regions), make sure to provide the number of rows and columns that can be collected in.'
-        n_rows, n_cols = rows_cols
-        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        if n_rows > len(alphabet):
-            raise NotImplementedError('More rows than letters of the alphabet. Someone needs to implement this (check what scope requires)')
-        collection_tube_locations = []
-        for n_row in range(n_rows):
-            for n_col in range(1, n_cols+1):
-                index = f"{alphabet[n_row]}{n_col}"
-                collection_tube_locations.append(index)
-        assert len(collection_tube_locations) >= xml_multipolygon.shape[0], f"More spatial regions ({xml_multipolygon.shape[0]}) than tubes to collect in ({len(collection_tube_locations)})!"
-        idx_to_collection_loc = {}
-        for i, idx in enumerate(xml_multipolygon.index):
-            idx_to_collection_loc[idx] = collection_tube_locations[i]
-
-        # get the number of shapes (shape count)
-        scount = xml_multipolygon.count_geometries().sum()
-
-        #ADD OVERALL SHAPE COUNT TO XML IMPORT
-        output.write("<ShapeCount>{}</ShapeCount>".format(scount))
-        output.write("\n")
-
-        current_shape = 0
-        for idx in xml_multipolygon.index:
-            multipoly = xml_multipolygon[idx]
-            # convert multipolygon to polygon list
-            polygons = convert_to_polygon_list(multipoly, verbose=verbose)
-
-            # CALCULATE POINT COUNTS FOR EACH SHAPE
-            for s_num, shape in enumerate(polygons):
-                current_shape += 1 # shape number has 1-based indexing, so doing this at the front
-                pre_polygon = shape.exterior.coords # updated to exterior instead of boundary... boundary was providing multilinestrings for some reason
-                
-                p_count = len(pre_polygon)
-                
-                # INSERT SHAPE NUMBER AND POINT COUNTS INTO XML FILE
-                output.write(f"<Shape_{current_shape}>")
-                output.write("\n")
-                output.write(f"<PointCount>{int(p_count)}</PointCount>")
-                output.write("\n")
-                # CapID for where to collect the sample
-                output.write(f"<CapID>{idx_to_collection_loc[idx]}</CapID>")
-                output.write("\n")
-                
-                # ENTER POINT NUMBER AND X / Y COORDINATES FOR EACH POINT INTO XML FILE
-                for i, coord in enumerate(pre_polygon):
-                    i = i + 1 # 1-based indexing
-                    output.write(f"<X_{i}>{int(coord[0])}</X_{i}>")
-                    output.write("\n")
-                    output.write(f"<Y_{i}>{int(coord[1])}</Y_{i}>")
-                    output.write("\n")    
-                
-                #CLOSE SHAPE 
-                output.write(f"</Shape_{current_shape}>")
-                output.write("\n")
-        #CLOSE COORDINATE ENTRY 
-        output.write("</ImageData>")
-
-        #CLOSE XML DOCUMENT
-        output.close()
-        return idx_to_collection_loc
-
-    else:
-        # convert multipolygon to polygon list
-        polygons = convert_to_polygon_list(xml_multipolygon, verbose=verbose)
-
-        # get the number of shapes (shape count)
-        scount = len(polygons)
-
-        #ADD OVERALL SHAPE COUNT TO XML IMPORT
-        output.write("<ShapeCount>{}</ShapeCount>".format(scount))
-        output.write("\n")
-
-
-        # CALCULATE POINT COUNTS FOR EACH SHAPE
-        for s_num, shape in enumerate(polygons):
-            num = s_num + 1 # shape number has 1-based indexing
-            pre_polygon = shape.exterior.coords # updated to exterior instead of boundary... boundary was providing multilinestrings for some reason
-            
-            p_count = len(pre_polygon)
-            
-            # INSERT SHAPE NUMBER AND POINT COUNTS INTO XML FILE
-            output.write(f"<Shape_{num}>")
-            output.write("\n")
-            output.write(f"<PointCount>{int(p_count)}</PointCount>")
-            output.write("\n")
-            # CapID for where to collect the sample
-            
-            # ENTER POINT NUMBER AND X / Y COORDINATES FOR EACH POINT INTO XML FILE
-            for i, coord in enumerate(pre_polygon):
-                i = i + 1 # 1-based indexing
-                output.write(f"<X_{i}>{int(coord[0])}</X_{i}>")
-                output.write("\n")
-                output.write(f"<Y_{i}>{int(coord[1])}</Y_{i}>")
-                output.write("\n")    
-            
-            #CLOSE SHAPE 
-            output.write(f"</Shape_{num}>")
-            output.write("\n")
-        #CLOSE COORDINATE ENTRY 
-        output.write("</ImageData>")
-
-        #CLOSE XML DOCUMENT
-        output.close()
-        return 1
-
-def remove_non_polygons(polygon_list: list):
-    return [polygon for polygon in polygon_list if (type(polygon) == shapely.Polygon)]
 
 def get_all_intersections(geoseries: gpd.GeoSeries, verbose: bool = False):
     """ Gets all the intersections between shapes in a
@@ -1748,123 +971,6 @@ def plot_shapes_onto_tissue(shapes: dict[int|str, shapely.geometry.MultiPolygon 
 
     return ret_dict
 
-def apply_affine_transform(point, matrix):
-    """Applies an affine transformation to a point.
-    
-    Args:
-        point(:class:`np.array`): A NumPy array representing the point (x, y).
-        matrix(:class:`np.array`): A 3x3 NumPy array representing the affine transformation matrix.
-
-    Returns:
-        :class:`np.array`:
-        A NumPy array representing the transformed point (x', y').
-    """
-    # Convert point to homogeneous coordinates
-    homogeneous_point = np.array([point[0], point[1], 1])
-
-    # Apply the transformation
-    transformed_point = np.dot(matrix, homogeneous_point)
-
-    # Convert back to Cartesian coordinates
-    return transformed_point[:2]
-
-def get_bspline_tiles(fixed_wsi: WSIReader, moving_wsi: WSIReader, moving_lvl_0_transform: np.array, 
-                      fixed_roi_mask: np.array, moving_roi_mask: np.array,
-                      plot: bool = True, bspline_tile_resolution: float = 0.5):
-    """ Get image tiles/arrays corresponding to provided mask ROI(s) at the desired resolution.
-    """
-    # increase resolution for a more accurate bspline registration (takes longer because of the higher resolution)
-
-    level_0_power = moving_wsi.info.objective_power
-    # before applying bspline transform, we want to get the region which we want to transform
-    if fixed_roi_mask is None:
-        fixed_roi_mask = np.full(fixed_wsi.info.slide_dimensions, 1)
-    if moving_roi_mask is None:
-        moving_roi_mask = np.full(moving_wsi.info.slide_dimensions, 1)
-    # in this case, it is the entirety of the tissue region of both the moving and fixed images
-    tissue_mask_both_moving_and_fixed = moving_roi_mask | fixed_roi_mask
-    xsum = np.sum(tissue_mask_both_moving_and_fixed, axis=0)
-    ysum = np.sum(tissue_mask_both_moving_and_fixed, axis=1)
-    for i, val in enumerate(xsum):
-        if val != 0:
-            x_min = i
-            break
-    for i, val in enumerate(xsum[::-1]):
-        if val != 0:
-            x_max = len(xsum) - i
-            break
-    for i, val in enumerate(ysum):
-        if val != 0:
-            y_min = i
-            break
-    for i, val in enumerate(ysum[::-1]):
-        if val != 0:
-            y_max = len(ysum) - i
-            break
-
-    width = x_max - x_min
-    height = y_max - y_min
-
-    buffer = 1
-
-    x_max = x_max + buffer
-    y_max = y_max + buffer
-    y_min = y_min - buffer
-    x_min = x_min - buffer
-
-
-    # scale tissue boundary from the thumbnail resolution to level0
-    x_max = round(x_max * 1/bspline_tile_resolution)
-    y_max = round(y_max * 1/bspline_tile_resolution)
-    x_min = round(x_min * 1/bspline_tile_resolution)
-    y_min = round(y_min * 1/bspline_tile_resolution)
-    width = x_max - x_min
-    height = y_max - y_min
-    location = (x_min, y_min)  # at base level 0
-
-    # get size in the bspline resolution
-    size = round(width * (bspline_tile_resolution/level_0_power)), round(height * (bspline_tile_resolution/level_0_power)) # at bspline resolution
-    size = np.array(size)
-    # get the location at bspline resolution
-    location_bspline = round(x_min * (bspline_tile_resolution/level_0_power)), round(y_min * (bspline_tile_resolution/level_0_power)) # at bspline resolution
-    # get bounds in the bspline resolution
-    bspline_bounds = np.round(np.array([x_min, y_min, x_max, y_max]) * (bspline_tile_resolution/level_0_power))
-
-    # --- Extract region from the fixed whole slide image ---
-    fixed_tile = fixed_wsi.read_rect(location, size, resolution=bspline_tile_resolution, units="power")
-
-    # --- Extract transformed region from the moving whole slide image ---
-    # matrix transform an image at bspline resolution
-    moving_thumbnail = moving_wsi.slide_thumbnail(bspline_tile_resolution, units='power')
-    # would be nice to have this be the padded version of warpAffine (hsf.)
-    registered_image = cv2.warpAffine(
-        moving_thumbnail,
-        (moving_lvl_0_transform * [
-            [[1, 1, bspline_tile_resolution/level_0_power],
-            [1, 1, bspline_tile_resolution/level_0_power],
-            [1, 1, 1]]
-        ])[0][0:-1],
-        size,
-        borderValue=(255, 255, 255)
-    )
-    # get the same region we extracted for the fixed image
-    moving_tile_wsi = WSIReader.open(registered_image)
-    moving_tile_registered = moving_tile_wsi.read_rect(location_bspline, size, pad_constant_values=(255))
-    # plot
-    if plot:
-        _, axs = plt.subplots(1, 2, figsize=(15, 10))
-        axs[0].imshow(fixed_tile, cmap="gray")
-        axs[0].set_title("Fixed Tile")
-        axs[1].imshow(moving_tile_registered, cmap="gray")
-        axs[1].set_title("Moving Tile")
-        plt.show()
-        plt.close()
-        
-    return dict(
-        bspline_bounds=bspline_bounds,
-        fixed_tile=fixed_tile,
-        moving_tile=moving_tile_registered
-    )
 
 def read_imagescope_xml_annotations(xml_path: Path | str):
     """ Function that reads in annotations from an exported ImageScope annotation xml file.
@@ -1901,13 +1007,6 @@ def read_imagescope_xml_annotations(xml_path: Path | str):
         regions_df = dict(regions_df)
         total_data_dict[annotation_layer_name] = regions_df
     return total_data_dict
-
-
-
-from shapely.geometry import MultiPolygon, Polygon, MultiPoint
-from shapely.ops import voronoi_diagram, nearest_points, unary_union
-import shapely
-import geopandas as gpd
 
 
 
@@ -2321,10 +1420,10 @@ def create_scope_xml2( xml_multipolygon: shapely.MultiPolygon, calib_layer: shap
         return 1   
 
 
-def plot_multipolygons_on_wsi(multipolygon_dict, tissue_shape: Polygon, wsi_path: WindowsPath, cwd : WindowsPath):
+def plot_multipolygons_on_wsi(multipolygon_dict, tissue_shape: Polygon, wsi_path: Path):
     
     # Open the whole slide image
-    slide = openslide.OpenSlide(str(wsi_path))
+    slide = WSIReader.open(str(wsi_path))
 
     # Get bounds of tissue shape
     minx, miny, maxx, maxy = map(int, tissue_shape.bounds)
@@ -2424,7 +1523,7 @@ def plot_multipolygons_on_wsi(multipolygon_dict, tissue_shape: Polygon, wsi_path
     ax.axis('off')
 
     # Save high-resolution image
-    plt.savefig(cwd / "unbiased_XML_files/output_plot.png", dpi=300, bbox_inches='tight')
+    plt.savefig("unbiased_XML_files/output_plot.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 
