@@ -196,3 +196,7 @@ cython_debug/
 # data
 data/wsi_analysis_demo.svs
 data/wsi_unbiased_analysis_demo.svs
+
+# XML files
+XML_files/
+unbiased_XML_files/
