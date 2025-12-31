@@ -6,23 +6,6 @@ os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="albumentations")
 
-
-##Path to the openslide binary. Version used can be downloaded at: https://github.com/openslide/openslide-bin/releases/tag/v20230414
-##Optional: Modify OPENSLIDE_PATH to point to the location of openslide-win64-20230414\bin 
-##The path can also be read from a config file, etc.
-#OPENSLIDE_PATH = None 
-#
-#if OPENSLIDE_PATH is not None:
-#    if hasattr(os, 'add_dll_directory'):
-#        # Python >= 3.8 on Windows
-#        with os.add_dll_directory(OPENSLIDE_PATH):
-#            import openslide
-#else:
-#    import openslide
-
-
-
-
 from shapely.geometry import MultiPolygon, Point
 import geopandas as gpd
 from sklearn.cluster import AgglomerativeClustering
@@ -30,8 +13,6 @@ import numpy as np
 from pathlib import Path
 
 import xml.etree.ElementTree as ET
-#import openslide
-from pathlib import WindowsPath
 import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, MultiPolygon
 from matplotlib.patches import Polygon as MplPolygon
@@ -49,11 +30,9 @@ import json
 from collections import defaultdict
 
 import cv2
-from PIL import Image
 
 import matplotlib as mpl
-from matplotlib.path import Path as mPath
-from matplotlib.patches import PathPatch
+from matplotlib.path import Path
 from matplotlib.collections import PatchCollection
 from shapely.geometry import LinearRing
 
@@ -62,23 +41,9 @@ from shapely import MultiPolygon, Polygon, make_valid
 from shapely.ops import unary_union, nearest_points
 
 from tiatoolbox.wsicore.wsireader import WSIReader
-from tiatoolbox.tools.tissuemask import MorphologicalMasker
-from skimage import color, exposure
-from scipy import ndimage
-import skimage.transform as st
-
-from tiatoolbox.tools.registration.wsi_registration import (
-    DFBRegister,
-    apply_bspline_transform,
-    estimate_bspline_transform,
-    match_histograms,
-)
 
 from tqdm import tqdm
 import itertools
-
-from subprocess import run
-
 
 
 def convert_to_polygon_list(multipolygon, verbose: bool = False):
@@ -109,19 +74,6 @@ def list_of_shapes_to_polygons(list_of_shapes, minimum_shape_area=0):
         if polygon.area < minimum_shape_area:
             ret_shapes.remove(polygon)
     return ret_shapes
-
-def multipolygon_mask(multipolygon, im_size):
-    """Convert multipolygon to
-       an image mask ndarray"""
-    img_mask = np.zeros(im_size, np.uint8)
-    # function to round and convert to int
-    int_coords = lambda x: np.array(x).round().astype(np.int32)
-    exteriors = [int_coords(poly.exterior.coords) for poly in multipolygon.geoms]
-    interiors = [int_coords(pi.coords) for poly in multipolygon.geoms
-                 for pi in poly.interiors]
-    cv2.fillPoly(img_mask, exteriors, 1)
-    cv2.fillPoly(img_mask, interiors, 1)
-    return img_mask
 
 
 def convert_HALO_regions_to_multipolygon(regions):
@@ -875,11 +827,24 @@ def plot_shapes_onto_tissue(shapes: dict[int|str, shapely.geometry.MultiPolygon 
                             new_mpp: float = 10.0,
                             plot: bool = True,
                             ax = None,
+                            draw_convex_hulls = False,
+                            draw_text = False,
+                            border_kwargs: dict = dict(
+                                linewidth=1,
+                                color='black'
+                            ),
                             shape_kwargs: dict = dict(
                                 alpha=0.7
                             ),
-                            border_kwargs: dict = dict(
-                                linewidth=1,
+                            text_kwargs: dict = dict(
+                                fontsize=12, 
+                                fontweight='bold', 
+                                backgroundcolor='white', 
+                                ha='center',
+                                va='center'
+                            ),
+                            line_kwargs: dict = dict(
+                                linewidth=2, 
                                 color='black'
                             )):
     """Plot shapes onto a section of tissue.
@@ -964,6 +929,23 @@ def plot_shapes_onto_tissue(shapes: dict[int|str, shapely.geometry.MultiPolygon 
         ax.imshow(rect)
         translated_and_scaled.plot(column='spatial_segment', cmap=cmap, ax=ax, **shape_kwargs)
         translated_and_scaled.boundary.plot(ax=ax, **border_kwargs)
+
+        # draw convex hull lines
+        if draw_convex_hulls:
+            for group_of_shapes in translated_and_scaled.iterrows():
+                c_hull = shapely.convex_hull(group_of_shapes[1]['geometry'])
+                hull_coords = np.array([[x, y] for x, y in c_hull.boundary.coords])
+                hull_x, hull_y = hull_coords[:, 0], hull_coords[:, 1]
+                plt.plot(hull_x, hull_y, 
+                        **line_kwargs)
+
+        # add the text on top of the groups
+        if draw_text:
+            for group_of_shapes in translated_and_scaled.iterrows():
+                c_hull = shapely.convex_hull(group_of_shapes[1]['geometry'])
+                num_pos_x, num_pos_y = [(x, y) for x, y in c_hull.centroid.coords][0]
+                plt.text(num_pos_x, num_pos_y, s=group_of_shapes[0], 
+                        **text_kwargs)
         plt.show()
 
     ret_dict['plotted_shapes'] = translated_and_scaled.copy()
@@ -1007,7 +989,6 @@ def read_imagescope_xml_annotations(xml_path: Path | str):
         regions_df = dict(regions_df)
         total_data_dict[annotation_layer_name] = regions_df
     return total_data_dict
-
 
 
 def make_shapes_lmdable_xml(image_location: str | Path,
@@ -1220,11 +1201,7 @@ def make_shapes_lmdable_xml(image_location: str | Path,
     return final_shapely_multipolygon
 
 
-
-def parse_annotation_file(layer, file ):
-    from shapely.geometry import Polygon, MultiPolygon
-    import xml.etree.ElementTree as ET
-    
+def parse_annotation_file(layer, file):    
     # Parse the XML
     tree = ET.parse(file)  # Replace with your file
     root = tree.getroot()
@@ -1256,13 +1233,13 @@ def parse_annotation_file(layer, file ):
         return shapes
     elif isinstance(shapes, Polygon):
         return MultiPolygon([shapes])
- 
 
 
-
-
-
-def create_scope_xml2( xml_multipolygon: shapely.MultiPolygon, calib_layer: shapely.MultiPolygon, xml_file_name: str, verbose: bool = False, rows_cols: tuple = None):
+def create_scope_xml(xml_multipolygon: shapely.MultiPolygon | gpd.GeoSeries, 
+                     calib_layer: shapely.MultiPolygon, 
+                     xml_file_name: str, 
+                     verbose: bool = False, 
+                     rows_cols: tuple = None):
     """ Generates an XML file to be imported onto the
     LMD scope for cutting.
     """
@@ -1420,6 +1397,7 @@ def create_scope_xml2( xml_multipolygon: shapely.MultiPolygon, calib_layer: shap
         return 1   
 
 
+# getting errors in the notebook when trying to use this function - TODO
 def plot_multipolygons_on_wsi(multipolygon_dict, tissue_shape: Polygon, wsi_path: Path):
     
     # Open the whole slide image
@@ -1527,14 +1505,13 @@ def plot_multipolygons_on_wsi(multipolygon_dict, tissue_shape: Polygon, wsi_path
     plt.show()
 
 
-
-
 def rebalance_multipolygons_by_area(
     multipolygon: MultiPolygon,
     cluster_count: int,
     tolerance: float = 0.05,
-    max_iterations: int = 1000
-):
+    max_iterations: int = 1000):
+    """ Creates groups of shapes (n = cluster_count) of similar sizes, determining a group for every shape provided.
+    """
     # Extract individual polygons
     polygons = list(multipolygon.geoms)
 
@@ -1699,183 +1676,22 @@ def rebalance_multipolygons_by_area(
     }
 
     return result
-
-
-def create_scope_xml_no_client(
-        image_id: str,
-        xml_multipolygon: shapely.MultiPolygon,
-        xml_file_name: str,
-        calibration_layer: shapely.MultiPolygon,
-        verbose: bool = False,
-        rows_cols: tuple = None):
-    """ Generates an XML file to be imported onto the
-    LMD scope for cutting.
-    """
-
-    #CAPTURE COORDINATES FOR CALIBRATION MARKS
-    calib_marks = []
-    for x in calibration_layer.geoms:
-        dic ={"x" : x.exterior.coords[0][0], "y": x.exterior.coords[0][1]}
-        calib_marks.append(dic)
-
-
-    # sort the calibration marks
-    ## first is the top left, then top right, then bottom right
-    calib_mark_df = pd.DataFrame(calib_marks)
-    assert not calib_mark_df.empty, "No calibration marks in annotation layer..."
-    assert calib_mark_df.shape == (3, 2), f"Unexpected number of calibration marks (expects 3, got {calib_mark_df.shape[0]})"
-    # top left
-    top_left = calib_mark_df.sort_values('x', ascending=True).iloc[0, :].to_dict()
-    top_left = (top_left['x'], top_left['y'])
-    # top right
-    ## drop top left
-    calib_mark_df_dropped = calib_mark_df.sort_values('x', ascending=True).drop([0], axis=0).reset_index(drop=True)
-    calib_mark_df_dropped = calib_mark_df_dropped.sort_values('y', ascending=True)
-    ## 0 should be top right, 1 should be bottom right
-    top_right = calib_mark_df_dropped.iloc[0, :].to_dict()
-    top_right = (top_right['x'], top_right['y'])
-    # bottom right
-    bottom_right = calib_mark_df_dropped.iloc[1, :].to_dict()
-    bottom_right = (bottom_right['x'], bottom_right['y'])
-
-    # OPEN XML FILE AND ADD CALIBRATION COORDINATES TO THE TOP OF THE PAGE
-    output = open(xml_file_name, 'w')
-    output.write("<ImageData>")
-    output.write("\n")
-    output.write("<GlobalCoordinates>1</GlobalCoordinates>")
-    output.write("\n")
-    output.write("<X_CalibrationPoint_1>{}</X_CalibrationPoint_1>".format(int(top_left[0])))
-    output.write("\n")
-    output.write("<Y_CalibrationPoint_1>{}</Y_CalibrationPoint_1>".format(int(top_left[1])))
-    output.write("\n")
-    output.write("<X_CalibrationPoint_2>{}</X_CalibrationPoint_2>".format(int(top_right[0])))
-    output.write("\n")
-    output.write("<Y_CalibrationPoint_2>{}</Y_CalibrationPoint_2>".format(int(top_right[1])))
-    output.write("\n")
-    output.write("<X_CalibrationPoint_3>{}</X_CalibrationPoint_3>".format(int(bottom_right[0])))
-    output.write("\n")
-    output.write("<Y_CalibrationPoint_3>{}</Y_CalibrationPoint_3>".format(int(bottom_right[1])))
-    output.write("\n")
-
-    if type(xml_multipolygon) == gpd.GeoSeries:
-        assert rows_cols != None, 'If providing a GeoSeries (spatially resolved regions), make sure to provide the number of rows and columns that can be collected in.'
-        n_rows, n_cols = rows_cols
-        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        if n_rows > len(alphabet):
-            raise NotImplementedError('More rows than letters of the alphabet. Someone needs to implement this (check what scope requires)')
-        collection_tube_locations = []
-        for n_row in range(n_rows):
-            for n_col in range(1, n_cols+1):
-                index = f"{alphabet[n_row]}{n_col}"
-                collection_tube_locations.append(index)
-        assert len(collection_tube_locations) >= xml_multipolygon.shape[0], f"More spatial regions ({xml_multipolygon.shape[0]}) than tubes to collect in ({len(collection_tube_locations)})!"
-        idx_to_collection_loc = {}
-        for i, idx in enumerate(xml_multipolygon.index):
-            idx_to_collection_loc[idx] = collection_tube_locations[i]
-
-        # get the number of shapes (shape count)
-        scount = xml_multipolygon.count_geometries().sum()
-
-        #ADD OVERALL SHAPE COUNT TO XML IMPORT
-        output.write("<ShapeCount>{}</ShapeCount>".format(scount))
-        output.write("\n")
-
-        current_shape = 0
-        for idx in xml_multipolygon.index:
-            multipoly = xml_multipolygon[idx]
-            # convert multipolygon to polygon list
-            polygons = convert_to_polygon_list(multipoly, verbose=verbose)
-
-            # CALCULATE POINT COUNTS FOR EACH SHAPE
-            for s_num, shape in enumerate(polygons):
-                current_shape += 1 # shape number has 1-based indexing, so doing this at the front
-                pre_polygon = shape.exterior.coords # updated to exterior instead of boundary... boundary was providing multilinestrings for some reason
-                
-                p_count = len(pre_polygon)
-                
-                # INSERT SHAPE NUMBER AND POINT COUNTS INTO XML FILE
-                output.write(f"<Shape_{current_shape}>")
-                output.write("\n")
-                output.write(f"<PointCount>{int(p_count)}</PointCount>")
-                output.write("\n")
-                # CapID for where to collect the sample
-                output.write(f"<CapID>{idx_to_collection_loc[idx]}</CapID>")
-                output.write("\n")
-                
-                # ENTER POINT NUMBER AND X / Y COORDINATES FOR EACH POINT INTO XML FILE
-                for i, coord in enumerate(pre_polygon):
-                    i = i + 1 # 1-based indexing
-                    output.write(f"<X_{i}>{int(coord[0])}</X_{i}>")
-                    output.write("\n")
-                    output.write(f"<Y_{i}>{int(coord[1])}</Y_{i}>")
-                    output.write("\n")    
-                
-                #CLOSE SHAPE 
-                output.write(f"</Shape_{current_shape}>")
-                output.write("\n")
-        #CLOSE COORDINATE ENTRY 
-        output.write("</ImageData>")
-
-        #CLOSE XML DOCUMENT
-        output.close()
-        return idx_to_collection_loc
-
-    else:
-        # convert multipolygon to polygon list
-        polygons = convert_to_polygon_list(xml_multipolygon, verbose=verbose)
-
-        # get the number of shapes (shape count)
-        scount = len(polygons)
-
-        #ADD OVERALL SHAPE COUNT TO XML IMPORT
-        output.write("<ShapeCount>{}</ShapeCount>".format(scount))
-        output.write("\n")
-
-
-        # CALCULATE POINT COUNTS FOR EACH SHAPE
-        for s_num, shape in enumerate(polygons):
-            num = s_num + 1 # shape number has 1-based indexing
-            pre_polygon = shape.exterior.coords # updated to exterior instead of boundary... boundary was providing multilinestrings for some reason
-            
-            p_count = len(pre_polygon)
-            
-            # INSERT SHAPE NUMBER AND POINT COUNTS INTO XML FILE
-            output.write(f"<Shape_{num}>")
-            output.write("\n")
-            output.write(f"<PointCount>{int(p_count)}</PointCount>")
-            output.write("\n")
-            # CapID for where to collect the sample
-            
-            # ENTER POINT NUMBER AND X / Y COORDINATES FOR EACH POINT INTO XML FILE
-            for i, coord in enumerate(pre_polygon):
-                i = i + 1 # 1-based indexing
-                output.write(f"<X_{i}>{int(coord[0])}</X_{i}>")
-                output.write("\n")
-                output.write(f"<Y_{i}>{int(coord[1])}</Y_{i}>")
-                output.write("\n")    
-            
-            #CLOSE SHAPE 
-            output.write(f"</Shape_{num}>")
-            output.write("\n")
-        #CLOSE COORDINATE ENTRY 
-        output.write("</ImageData>")
-
-        #CLOSE XML DOCUMENT
-        output.close()
-        return 1
     
+def partition_collections_to_xml(MultiPolygon_Dict: dict, calib: shapely.MultiPolygon, rows: int = 2, columns: int = 7):
+    """ Generates XML files set up for multiple collections iteratively with the largest 'chunk' size.
 
-
-def partition_collections_to_xml(MultiPolygon_Dict : dict, chunk_size : int, rows: int, columns : int, calib: shapely.MultiPolygon, cwd :WindowsPath):
-    # Sort the keys numerically
+    Small wrapper for 'create_scope_xml'
+    """
+    
+    # Sort the keys
     sorted_keys = sorted(MultiPolygon_Dict.keys())
     # Iterate through keys in chunks
+    chunk_size = rows * columns # chunk size so multiple files can be generated with the max number of collected samples per file
     for i in range(0, len(sorted_keys), chunk_size):
         chunk_keys = sorted_keys[i:i + chunk_size]
         chunk = {k: MultiPolygon_Dict[k] for k in chunk_keys}
-        geoseries_mapper = create_scope_xml_no_client(
-                                        image_id = "test", 
+        geoseries_mapper = create_scope_xml(
                                         xml_multipolygon = gpd.GeoSeries(chunk), 
-                                        xml_file_name = cwd / 'unbiased_XML_files/Whole_Tissue_Spatial_{}.xml'.format(i),
-                                        calibration_layer = calib,
-                                        rows_cols = (2,7))
+                                        xml_file_name = Path('unbiased_XML_files/Whole_Tissue_Spatial_{}.xml'.format(i)),
+                                        calib_layer = calib,
+                                        rows_cols = (rows,columns))
