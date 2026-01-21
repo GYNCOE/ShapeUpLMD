@@ -6,11 +6,12 @@ os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="albumentations")
 
+from PIL import Image
 from shapely.geometry import MultiPolygon, Point
 import geopandas as gpd
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
-from pathlib import Path
+from pathlib import Path as MplPath
 
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
@@ -1409,7 +1410,17 @@ def plot_multipolygons_on_wsi(multipolygon_dict, tissue_shape: Polygon, wsi_path
     height = maxy - miny
 
     # Read region from WSI
-    cropped_image = slide.read_region((minx, miny), 0, (width, height)).convert("RGB")
+    region = slide.read_region((minx, miny), 0, (width, height))
+    
+    # Convert to PIL Image if necessary
+    if isinstance(region, np.ndarray):
+        cropped_image = Image.fromarray(region)
+    else:
+        cropped_image = region
+
+    # Ensure RGB
+    if hasattr(cropped_image, "convert"):
+        cropped_image = cropped_image.convert("RGB")
 
     # Plotting setup
     fig, ax = plt.subplots(figsize=(20, 16))
@@ -1692,6 +1703,6 @@ def partition_collections_to_xml(MultiPolygon_Dict: dict, calib: shapely.MultiPo
         chunk = {k: MultiPolygon_Dict[k] for k in chunk_keys}
         geoseries_mapper = create_scope_xml(
                                         xml_multipolygon = gpd.GeoSeries(chunk), 
-                                        xml_file_name = Path('unbiased_XML_files/Whole_Tissue_Spatial_{}.xml'.format(i)),
+                                        xml_file_name = MplPath('unbiased_XML_files/Whole_Tissue_Spatial_{}.xml'.format(i)),
                                         calib_layer = calib,
                                         rows_cols = (rows,columns))
