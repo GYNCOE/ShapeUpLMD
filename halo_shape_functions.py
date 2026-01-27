@@ -11,7 +11,7 @@ from shapely.geometry import MultiPolygon, Point
 import geopandas as gpd
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
-from pathlib import Path as MplPath
+from pathlib import Path
 
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
@@ -33,7 +33,7 @@ from collections import defaultdict
 import cv2
 
 import matplotlib as mpl
-from matplotlib.path import Path
+from matplotlib.path import Path as MplPath
 from matplotlib.collections import PatchCollection
 from shapely.geometry import LinearRing
 
