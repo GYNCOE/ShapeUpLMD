@@ -33,7 +33,6 @@ from collections import defaultdict
 import cv2
 
 import matplotlib as mpl
-from matplotlib.path import Path as MplPath
 from matplotlib.collections import PatchCollection
 from shapely.geometry import LinearRing
 
@@ -1703,6 +1702,6 @@ def partition_collections_to_xml(MultiPolygon_Dict: dict, calib: shapely.MultiPo
         chunk = {k: MultiPolygon_Dict[k] for k in chunk_keys}
         geoseries_mapper = create_scope_xml(
                                         xml_multipolygon = gpd.GeoSeries(chunk), 
-                                        xml_file_name = MplPath('unbiased_XML_files/Whole_Tissue_Spatial_{}.xml'.format(i)),
+                                        xml_file_name = Path('unbiased_XML_files/Whole_Tissue_Spatial_{}.xml'.format(i)),
                                         calib_layer = calib,
                                         rows_cols = (rows,columns))
