@@ -946,7 +946,6 @@ def plot_shapes_onto_tissue(shapes: dict[int|str, shapely.geometry.MultiPolygon 
                 num_pos_x, num_pos_y = [(x, y) for x, y in c_hull.centroid.coords][0]
                 plt.text(num_pos_x, num_pos_y, s=group_of_shapes[0], 
                         **text_kwargs)
-        plt.show()
 
     ret_dict['plotted_shapes'] = translated_and_scaled.copy()
     ret_dict['section_image'] = rect
