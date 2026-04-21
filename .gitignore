@@ -200,3 +200,6 @@ data/wsi_unbiased_analysis_demo.svs
 # XML files
 XML_files/
 unbiased_XML_files/
+
+# parameter sweep files
+parameter_sweep/
