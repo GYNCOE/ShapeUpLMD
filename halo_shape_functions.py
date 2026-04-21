@@ -824,7 +824,7 @@ def plot_shapes_onto_tissue(shapes: dict[int|str, shapely.geometry.MultiPolygon 
                             framing_shape: shapely.geometry.MultiPolygon | shapely.geometry.Polygon = None,
                             cmap: str = 'tab10',
                             buffer_size: int = 700,
-                            new_mpp: float = 10.0,
+                            mpp: float = 10.0,
                             plot: bool = True,
                             ax = None,
                             draw_convex_hulls = False,
@@ -915,8 +915,8 @@ def plot_shapes_onto_tissue(shapes: dict[int|str, shapely.geometry.MultiPolygon 
     original_mpp = image_wsi.info.as_dict()['mpp'][0]
 
     # get mpp ratio for shape translation
-    mpp_ratio = original_mpp / new_mpp # get the ratio of the original mpp to the new mpp
-    rect = image_wsi.read_rect(location=loc, size=(int(width*mpp_ratio), int(height*mpp_ratio)), resolution=new_mpp, units="mpp")
+    mpp_ratio = original_mpp / mpp # get the ratio of the original mpp to the new mpp
+    rect = image_wsi.read_rect(location=loc, size=(int(width*mpp_ratio), int(height*mpp_ratio)), resolution=mpp, units="mpp")
 
     # translate and scale the shapes
     translated_and_scaled = df.reset_index(names=['spatial_segment'])
