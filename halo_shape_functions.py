@@ -1229,8 +1229,8 @@ def parse_annotation_file(layer, file):
     tumor_roa_1_multipolygon = MultiPolygon([Polygon(coords) for coords in tumor_roa_1_coords])
     
     shapes = tumor_roa_0_multipolygon.difference(tumor_roa_1_multipolygon)
-    if len(shapes) == 0:
-        print(f"Annotation layers found named '{layer}'")
+    if shapes.area == 0: # this could be done earlier/better
+        print(f"No annotation layer found named '{layer}'")
         return 0
     if isinstance(shapes, MultiPolygon):
         return shapes
