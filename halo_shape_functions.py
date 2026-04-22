@@ -11,7 +11,7 @@ from shapely.geometry import MultiPolygon, Point
 import geopandas as gpd
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
@@ -45,17 +45,20 @@ from tiatoolbox.wsicore.wsireader import WSIReader
 from tqdm import tqdm
 import itertools
 
+from typing import Callable
+from functools import partial
+
 
 def convert_to_polygon_list(multipolygon, verbose: bool = False):
-    if type(multipolygon) == shapely.MultiPolygon: ret = list(multipolygon.geoms)
-    elif type(multipolygon) == shapely.Polygon:
+    if isinstance(multipolygon, shapely.MultiPolygon): ret = list(multipolygon.geoms)
+    elif isinstance(multipolygon, shapely.Polygon):
         if multipolygon.is_valid:
             ret = [multipolygon]
         else:
             valid_shape = shapely.make_valid(multipolygon)
 
             ret = convert_to_polygon_list(valid_shape)
-    elif type(multipolygon) == shapely.GeometryCollection: 
+    elif isinstance(multipolygon, shapely.GeometryCollection): 
         ret = []
         for polygon in multipolygon.geoms:
             ret.extend(convert_to_polygon_list(shapely.make_valid(polygon), verbose=verbose))
@@ -243,14 +246,14 @@ def simplify_and_smooth(polygon, mitre_distance=10, thinness_distance=25, first_
     first_buffer_step = make_valid(polygon.buffer(-thinness_distance, join_style="mitre"))
     second_buffer_step = first_buffer_step.buffer(thinness_distance, join_style="mitre")
     split_poly = make_valid(polygon.intersection(make_valid(second_buffer_step)))
-    if type(split_poly) == shapely.MultiPolygon:
+    if isinstance(split_poly, shapely.MultiPolygon):
         polygon = split_poly
     
 
     fix_multigeo = []
-    if type(polygon) == shapely.GeometryCollection:
+    if isinstance(polygon, shapely.GeometryCollection):
         for shape in polygon.geoms:
-            if type(shape) == shapely.Polygon:
+            if isinstance(shape, shapely.Polygon):
                 fix_multigeo.append(shape)
         polygon = shapely.MultiPolygon(fix_multigeo)
 
@@ -287,7 +290,7 @@ def find_optimal_vertical_slice(polygon, cut_size, tests, minimum_shape_area, ma
         cut_shape = shapely.LineString([(min_x + step*test, min_y), (min_x + step*test, max_y)]).buffer(cut_size) # line string from the top to the bottom of the shape, with the width of the cut_size
         cut_polygon = polygon.difference(cut_shape)
         # simplify and smooth the cut shapes
-        cut_polygon = simplify_and_smooth(cut_polygon, **kwargs)
+        #cut_polygon = simplify_and_smooth(cut_polygon, **kwargs)
         test_cut_polygons.append(cut_polygon)
 
     # check each test cut to see which is the 'best' by certain parameters
@@ -297,15 +300,17 @@ def find_optimal_vertical_slice(polygon, cut_size, tests, minimum_shape_area, ma
         current_cut_shape_stats = defaultdict(int)
         current_cut_shape_stats['all_shapes_smaller_than_max'] = True
         test_cut_geometrycollection = []
-        if type(test_cut_multipolygon) == shapely.GeometryCollection:
+        if isinstance(test_cut_multipolygon, shapely.GeometryCollection):
             # remove anything that isn't a polygon
             for cut_shape in list(test_cut_multipolygon.geoms):
-                if type(cut_shape) == shapely.Polygon:
+                if isinstance(cut_shape, shapely.Polygon):
                     test_cut_geometrycollection.append(cut_shape)
             test_cut_multipolygon = shapely.MultiPolygon(test_cut_geometrycollection)
-        elif type(test_cut_multipolygon) != shapely.MultiPolygon: # everything else
+        elif isinstance(test_cut_multipolygon, shapely.MultiPolygon):
             test_cut_multipolygon = convert_to_polygon_list(test_cut_multipolygon)
             test_cut_multipolygon = shapely.MultiPolygon(test_cut_multipolygon)
+        elif isinstance(test_cut_multipolygon, shapely.Polygon): # not sure why this is happening
+            test_cut_multipolygon = shapely.MultiPolygon([test_cut_multipolygon])
 
         
         n_shapes = len(list(test_cut_multipolygon.geoms))
@@ -380,7 +385,7 @@ def find_optimal_horizontal_slice(polygon, cut_size, tests, minimum_shape_area, 
         cut_shape = shapely.LineString([(min_x, min_y + step*test), (max_x, min_y + step*test)]).buffer(cut_size) # line string from the top to the bottom of the shape, with the width of the cut_size
         cut_polygon = polygon.difference(cut_shape)
         # simplify and smooth the cut shapes
-        cut_polygon = simplify_and_smooth(cut_polygon, **kwargs)
+        #cut_polygon = simplify_and_smooth(cut_polygon, **kwargs)
         test_cut_polygons.append(cut_polygon)
 
     # check each test cut to see which is the 'best' by certain parameters
@@ -390,15 +395,17 @@ def find_optimal_horizontal_slice(polygon, cut_size, tests, minimum_shape_area, 
         current_cut_shape_stats = defaultdict(int)
         current_cut_shape_stats['all_shapes_smaller_than_max'] = True
         test_cut_geometrycollection = []
-        if type(test_cut_multipolygon) == shapely.GeometryCollection:
+        if isinstance(test_cut_multipolygon, shapely.GeometryCollection):
             # remove anything that isn't a polygon
             for cut_shape in list(test_cut_multipolygon.geoms):
-                if type(cut_shape) == shapely.Polygon:
+                if isinstance(cut_shape, shapely.Polygon):
                     test_cut_geometrycollection.append(cut_shape)
             test_cut_multipolygon = shapely.MultiPolygon(test_cut_geometrycollection)
-        elif type(test_cut_multipolygon) != shapely.MultiPolygon: # everything else
+        elif isinstance(test_cut_multipolygon, shapely.MultiPolygon):
             test_cut_multipolygon = convert_to_polygon_list(test_cut_multipolygon)
             test_cut_multipolygon = shapely.MultiPolygon(test_cut_multipolygon)
+        elif isinstance(test_cut_multipolygon, shapely.Polygon): # not sure why this is happening
+            test_cut_multipolygon = shapely.MultiPolygon([test_cut_multipolygon])
 
         
         n_shapes = len(list(test_cut_multipolygon.geoms))
@@ -458,13 +465,13 @@ def find_best_slice(polygon, cut_size, tests, minimum_shape_area, maximum_shape_
         # remove anything that isnt a polygon from horiz and vert
         horiz_polygon = []
         for shape in horiz['polygon'].geoms:
-            if type(shape) == shapely.Polygon:
+            if isinstance(shape, shapely.Polygon):
                 horiz_polygon.append(shape)
         horiz_polygon = shapely.MultiPolygon(horiz_polygon)
 
         vert_polygon = []
         for shape in vert['polygon'].geoms:
-            if type(shape) == shapely.Polygon:
+            if isinstance(shape, shapely.Polygon):
                 vert_polygon.append(shape)
         vert_polygon = shapely.MultiPolygon(vert_polygon)
 
@@ -575,7 +582,7 @@ def remove_thin_regions(shape: shapely.Polygon, cut_size: int | float, verbose: 
     # convert into a polygon list
     polygon_list = convert_to_polygon_list(intersection, verbose=verbose)
     ## remove non polygons (linestrings, etc)
-    polygon_list = [polygon for polygon in polygon_list if type(polygon) == shapely.Polygon]
+    polygon_list = [polygon for polygon in polygon_list if isinstance(polygon, shapely.Polygon)]
     final_shapes = []
     # remove internal pins
     for pg in polygon_list:
@@ -634,18 +641,21 @@ def scrub_cycle(shape: shapely.Polygon, cut_size: int | float, final_shapes: lis
 
 # TODO - split shapes up first before making connectors to negative regions,
 # as we might just split on the negative region anyways, would probably save on yield
-def make_shapes_lmdable(image_location: str | Path,
+# TODO - buffer cutouts in a similar way, so that there are no cutouts with close edges,
+# nor cutouts that have sharp corners, etc
+def make_shapes_lmdable(image_location: str | Path | float | int,
                         collection_regions: MultiPolygon,
                         minimum_micrometers_squared: int = 10000,
                         maximum_micrometers_squared: int = 600*600,
                         minimum_micrometers_between_shapes: int = 60,
                         n_slices_to_check: int = 5,
-                        verbose: int = True):
+                        simplify: Callable = partial(shapely.simplify, tolerance=1, preserve_topology=True),
+                        verbose: int = False):
     """ Converts HALO regions into shapely shapes that can be exported to XML to cut on an LMD scope.
 
     Args:
-        image_location (:class:`str` | :class:`pathlib.Path`):
-            The image file location (specifically, the same file that HALO is using)
+        image_location (:class:`str` | :class:`pathlib.Path` | :class:`float`| :class:`int`):
+            The wsi file location so we can get the mpp OR the micrometers per pixel (mpp) of the image
         collection_regions (:class:`MultiPolygon`):
             The regions to be prepared for LMD collection
         minimum_micrometers_squared (:class:`int`):
@@ -659,6 +669,10 @@ def make_shapes_lmdable(image_location: str | Path,
         n_slices_to_check (:class:`int`):
             The number of horizontal and vertical slice positions to check when
             deciding the most optimal
+        simplify (:class:`Callable`):
+            A function which takes a polygon as input and returns the simplified shape(s),
+            shapely's simplify (Douglas-Peucker) as default.
+            If None is provided, simplification is skipped.
         verbose (:class:`int`):
             Whether or not to create progress bars and print status updates
     
@@ -667,16 +681,24 @@ def make_shapes_lmdable(image_location: str | Path,
             MultiPolygon filled with shapes that can be converted to XML for
             cutting on an LMD scope
     """
-    if type(image_location) == str:
+    if isinstance(image_location, str) or isinstance(image_location, PurePath):
         image_location = Path(image_location)
-    assert image_location.exists(), f"Path {image_location=} does not exist!"
-    # get mpp from image
-    if verbose:
-        print("reading in image with WSIReader (getting mpp)")
-    wsi = WSIReader.open(image_location)
-    mpp = wsi.info.as_dict()['mpp']
-    assert mpp[0] == mpp[1], "x y mpp different, didn't account for this..."
-    mpp = mpp[0]
+        assert image_location.exists(), f"Path {image_location=} does not exist!"
+        # get mpp from image
+        if verbose:
+            print("reading in image with WSIReader (getting mpp)")
+        wsi = WSIReader.open(image_location)
+        mpp = wsi.info.as_dict()['mpp']
+        assert mpp[0] == mpp[1], "x y mpp different, didn't account for this..."
+        mpp = mpp[0]
+    elif isinstance(image_location, float) or isinstance(image_location, int):
+        mpp = image_location
+    else:
+        print('Expected a str/path to the WSI, or an mpp value.')
+        return 0
+
+    if simplify == None:
+        simplify = lambda x: x
 
     # get minimum shape areas in pixels
     minimum_shape_area = minimum_micrometers_squared/(mpp**2)
@@ -708,21 +730,23 @@ def make_shapes_lmdable(image_location: str | Path,
             if polygon != cutout and polygon.intersects(cutout):
                 # fix polygon (cutting out region, but also connecting it to non-shape)
                 # figure out of polygon is a multipolygon
-                if type(polygon) != shapely.Polygon:
+                if isinstance(polygon, shapely.MultiPolygon):
                     poly_list = []
                     for actual_polygon in tqdm(list(polygon.geoms), desc="connectors inner", disable=not verbose):
-                        if type(actual_polygon) == shapely.LineString or type(actual_polygon) == shapely.Point:
+                        if isinstance(actual_polygon, shapely.LineString) or isinstance(actual_polygon, shapely.Point):
                             # skip these
                             continue
                         # add a connector to the polygon
-                        connector = shapely.LineString([[x for x in nearest_points(actual_polygon.exterior, cutout.centroid)][0], [x for x in cutout.centroid.coords][0]]).buffer(cut_size, cap_style='square', join_style='round')
-                        actual_polygon = actual_polygon.difference(unary_union([cutout, connector, cutout.centroid.buffer(cut_size)]))
+                        connector = shapely.LineString(nearest_points(actual_polygon.exterior, cutout.exterior)).buffer(cut_size, cap_style='square', join_style='round')
+                        # remove the connector shape from the polygon, removing the hole
+                        actual_polygon = actual_polygon.difference(unary_union([cutout, connector, *[x.buffer(cut_size*1.5) for x in nearest_points(actual_polygon.exterior, cutout.exterior)]]))
                         poly_list.append(actual_polygon)
                     polygon = unary_union(poly_list)
                 else:
                     # add a connector to the polygon
-                    connector = shapely.LineString([[x for x in nearest_points(polygon.exterior, cutout.centroid)][0], [x for x in cutout.centroid.coords][0]]).buffer(cut_size, cap_style='square', join_style='round')
-                    polygon = polygon.difference(unary_union([cutout, connector, cutout.centroid.buffer(cut_size)]))
+                    connector = shapely.LineString(nearest_points(polygon.exterior, cutout.exterior)).buffer(cut_size, cap_style='square', join_style='round')
+                    # remove the connector shape from the polygon, removing the hole
+                    polygon = polygon.difference(unary_union([cutout, connector, *[x.buffer(cut_size*1.5) for x in nearest_points(polygon.exterior, cutout.exterior)]]))
         polys.append(polygon)        
         
     # fix multipolygons (in case there is multipolygon inception?)
@@ -734,8 +758,8 @@ def make_shapes_lmdable(image_location: str | Path,
     simplified_polys = []
     for poly in tqdm(polys, desc="simplifying", disable=not verbose):
         #new_poly = hsf.simplify_and_smooth(shapely.make_valid(poly), thinness_distance=cut_size)
-        new_poly = shapely.simplify(poly, 5)
-        if type(new_poly) == shapely.MultiPolygon:
+        new_poly = simplify(poly)
+        if isinstance(new_poly, shapely.MultiPolygon):
             for polyi in list(new_poly.geoms):
                 simplified_polys.append(polyi)
         else:
@@ -807,8 +831,8 @@ def make_shapes_lmdable(image_location: str | Path,
     simplified_polys_again = []
     for poly in tqdm(simplified_polys, desc="simplifying", disable=not verbose):
         #new_poly = hsf.simplify_and_smooth(shapely.make_valid(poly), thinness_distance=cut_size)
-        new_poly = shapely.simplify(poly, 5)
-        if type(new_poly) == shapely.MultiPolygon:
+        new_poly = simplify(poly)
+        if isinstance(new_poly, shapely.MultiPolygon):
             for polyi in list(new_poly.geoms):
                 simplified_polys_again.append(polyi)
         else:
@@ -821,6 +845,9 @@ def make_shapes_lmdable(image_location: str | Path,
 
     # make a valid multipolygon
     final_shapely_multipolygon = shapely.make_valid(shapely.MultiPolygon(simplified_polys_again))
+    
+    # get regions which were only in the original provided multipolygon
+    final_shapely_multipolygon = shapely.intersection(collection_regions, final_shapely_multipolygon)
     
     return final_shapely_multipolygon
 
@@ -879,19 +906,19 @@ def plot_shapes_onto_tissue(shapes: dict[int|str, shapely.geometry.MultiPolygon 
             Transformed shapes (key `plotted_shapes`) and image section (key `section_image`) in a dictionary
     """
     # check shape types
-    if type(shapes) == dict:
+    if isinstance(shapes, dict):
         for key in shapes:
             shape = shapes[key]
-            assert (type(shape) == shapely.geometry.MultiPolygon) or (type(shape) == shapely.geometry.Polygon), "Make sure `shapes` contains only Polygons or MultiPolygons from shapely"
+            assert (isinstance(shape, shapely.MultiPolygon)) or (isinstance(shape, shapely.Polygon)), "Make sure `shapes` contains only Polygons or MultiPolygons from shapely"
     else:
-        assert (type(shapes) == shapely.geometry.MultiPolygon) or (type(shapes) == shapely.geometry.Polygon), "Make sure `shapes` is a Polygon or MultiPolygon from shapely"
+        assert (isinstance(shapes, shapely.MultiPolygon)) or (isinstance(shapes, shapely.Polygon)), "Make sure `shapes` is a Polygon or MultiPolygon from shapely"
     # check image location exists
-    if type(image_location) == str:
+    if isinstance(image_location, str):
         image_location = Path(image_location)
     assert image_location.exists(), f"`image_location` doesn't exist ({image_location=})"
     # check framing type
     if framing_shape != None:
-        assert (type(framing_shape) == shapely.geometry.MultiPolygon) or (type(framing_shape) == shapely.geometry.Polygon), "Make sure `framing_shape` is a Polygon or MultiPolygon from shapely"
+        assert (isinstance(framing_shape, shapely.MultiPolygon)) or (isinstance(framing_shape, shapely.Polygon)), "Make sure `framing_shape` is a Polygon or MultiPolygon from shapely"
     # check that colormap exists
     assert cmap in mpl.colormaps.keys(), f"{cmap} is not a colormap (try `[print(x) for x in matplotlib.colormaps.keys()]`)"
 
@@ -965,7 +992,7 @@ def read_imagescope_xml_annotations(xml_path: Path | str):
     First set of keys are the annotation layer names. Second set of keys are for the shapes and areas. 
     """
     # convert string path into path path
-    if type(xml_path) == str:
+    if isinstance(xml_path, str):
         xml_path = Path(xml_path)
 
     total_data_dict = dict() # dictionary that holds all the shapes, first set of keys are the annotation file names, second set of keys are the shorthand annotation layer names, 
@@ -1029,7 +1056,7 @@ def read_imagescope_xml_annotations(xml_path: Path | str):
 #             MultiPolygon filled with shapes that can be converted to XML for
 #             cutting on an LMD scope
 #     """
-#     if type(image_location) == str:
+#     if isinstance(image_location) == str:
 #         image_location = Path(image_location)
 #     assert image_location.exists(), f"Path {image_location=} does not exist!"
 #     # get mpp from image
@@ -1292,7 +1319,7 @@ def create_scope_xml(xml_multipolygon: shapely.MultiPolygon | gpd.GeoSeries,
     output.write("<Y_CalibrationPoint_3>{}</Y_CalibrationPoint_3>".format(int(bottom_right[1])))
     output.write("\n")
 
-    if type(xml_multipolygon) == gpd.GeoSeries:
+    if isinstance(xml_multipolygon, gpd.GeoSeries):
         assert rows_cols != None, 'If providing a GeoSeries (spatially resolved regions), make sure to provide the number of rows and columns that can be collected in.'
         n_rows, n_cols = rows_cols
         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
