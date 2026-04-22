@@ -258,7 +258,10 @@ def simplify_and_smooth(polygon, mitre_distance=10, thinness_distance=25, first_
 
     return polygon
 
-
+# finding the slices could use a lot of fixing up
+# 1. vertical and horizontal slice functions, or at least their shared lines of code, should be combined
+# 2. object type checking should be handled more smoothly
+# 3. better documentation
 def find_optimal_vertical_slice(polygon, cut_size, tests, minimum_shape_area, maximum_shape_area, pbar=False, **kwargs):
     if polygon.area < maximum_shape_area:
         return {'polygon':polygon, 'stats':pd.Series({
@@ -300,24 +303,28 @@ def find_optimal_vertical_slice(polygon, cut_size, tests, minimum_shape_area, ma
                 if type(cut_shape) == shapely.Polygon:
                     test_cut_geometrycollection.append(cut_shape)
             test_cut_multipolygon = shapely.MultiPolygon(test_cut_geometrycollection)
-        if type(test_cut_multipolygon) == shapely.MultiPolygon:
-            n_shapes = len(list(test_cut_multipolygon.geoms))
-            perfect_cut_area = test_cut_multipolygon.area/n_shapes
-            diffs_from_perfect = []
-            for cut_shape in list(test_cut_multipolygon.geoms):
-                # skip shapes that are too small to cut/an unreasonable size
-                if cut_shape.area < minimum_shape_area:
-                    continue
-                # the area of the shapes created (of reasonable size)
-                current_cut_shape_stats['area'] = current_cut_shape_stats['area'] + cut_shape.area
-                # number of shapes created (again, of resonable size)
-                current_cut_shape_stats['n_shapes'] = current_cut_shape_stats['n_shapes'] + 1
-                # check if shape's area is smaller than the max allowed
-                diffs_from_perfect.append(np.abs(perfect_cut_area - cut_shape.area))
-                if cut_shape.area > maximum_shape_area:
-                    current_cut_shape_stats['all_shapes_smaller_than_max'] = False
-            current_cut_shape_stats['mean_diffs_from_perfect'] = np.mean(diffs_from_perfect)
-            test_cut_shape_stats[i] = current_cut_shape_stats.copy()
+        elif type(test_cut_multipolygon) != shapely.MultiPolygon: # everything else
+            test_cut_multipolygon = convert_to_polygon_list(test_cut_multipolygon)
+            test_cut_multipolygon = shapely.MultiPolygon(test_cut_multipolygon)
+
+        
+        n_shapes = len(list(test_cut_multipolygon.geoms))
+        perfect_cut_area = test_cut_multipolygon.area/n_shapes
+        diffs_from_perfect = []
+        for cut_shape in list(test_cut_multipolygon.geoms):
+            # skip shapes that are too small to cut/an unreasonable size # i think this was causing problems, we can deal with small shapes later
+            #if cut_shape.area < minimum_shape_area:
+            #    continue
+            # the area of the shapes created (of reasonable size)
+            current_cut_shape_stats['area'] = current_cut_shape_stats['area'] + cut_shape.area
+            # number of shapes created (again, of resonable size)
+            current_cut_shape_stats['n_shapes'] = current_cut_shape_stats['n_shapes'] + 1
+            # check if shape's area is smaller than the max allowed
+            diffs_from_perfect.append(np.abs(perfect_cut_area - cut_shape.area))
+            if cut_shape.area > maximum_shape_area:
+                current_cut_shape_stats['all_shapes_smaller_than_max'] = False
+        current_cut_shape_stats['mean_diffs_from_perfect'] = np.mean(diffs_from_perfect)
+        test_cut_shape_stats[i] = current_cut_shape_stats.copy()
 
     stat_df = pd.DataFrame(test_cut_shape_stats).T
 
@@ -389,25 +396,28 @@ def find_optimal_horizontal_slice(polygon, cut_size, tests, minimum_shape_area, 
                 if type(cut_shape) == shapely.Polygon:
                     test_cut_geometrycollection.append(cut_shape)
             test_cut_multipolygon = shapely.MultiPolygon(test_cut_geometrycollection)
+        elif type(test_cut_multipolygon) != shapely.MultiPolygon: # everything else
+            test_cut_multipolygon = convert_to_polygon_list(test_cut_multipolygon)
+            test_cut_multipolygon = shapely.MultiPolygon(test_cut_multipolygon)
 
-        if type(test_cut_multipolygon) == shapely.MultiPolygon:
-            n_shapes = len(list(test_cut_multipolygon.geoms))
-            perfect_cut_area = test_cut_multipolygon.area/n_shapes
-            diffs_from_perfect = []
-            for cut_shape in list(test_cut_multipolygon.geoms):
-                # skip shapes that are too small to cut/an unreasonable size
-                if cut_shape.area < minimum_shape_area:
-                    continue
-                # the area of the shapes created (of reasonable size)
-                current_cut_shape_stats['area'] = current_cut_shape_stats['area'] + cut_shape.area
-                # number of shapes created (again, of resonable size)
-                current_cut_shape_stats['n_shapes'] = current_cut_shape_stats['n_shapes'] + 1
-                # check if shape's area is smaller than the max allowed
-                diffs_from_perfect.append(np.abs(perfect_cut_area - cut_shape.area))
-                if cut_shape.area > maximum_shape_area:
-                    current_cut_shape_stats['all_shapes_smaller_than_max'] = False
-            current_cut_shape_stats['mean_diffs_from_perfect'] = np.mean(diffs_from_perfect)
-            test_cut_shape_stats[i] = current_cut_shape_stats.copy()
+        
+        n_shapes = len(list(test_cut_multipolygon.geoms))
+        perfect_cut_area = test_cut_multipolygon.area/n_shapes
+        diffs_from_perfect = []
+        for cut_shape in list(test_cut_multipolygon.geoms):
+            # skip shapes that are too small to cut/an unreasonable size # i think this was causing problems, we can deal with small shapes later
+            #if cut_shape.area < minimum_shape_area:
+            #    continue
+            # the area of the shapes created (of reasonable size)
+            current_cut_shape_stats['area'] = current_cut_shape_stats['area'] + cut_shape.area
+            # number of shapes created (again, of resonable size)
+            current_cut_shape_stats['n_shapes'] = current_cut_shape_stats['n_shapes'] + 1
+            # check if shape's area is smaller than the max allowed
+            diffs_from_perfect.append(np.abs(perfect_cut_area - cut_shape.area))
+            if cut_shape.area > maximum_shape_area:
+                current_cut_shape_stats['all_shapes_smaller_than_max'] = False
+        current_cut_shape_stats['mean_diffs_from_perfect'] = np.mean(diffs_from_perfect)
+        test_cut_shape_stats[i] = current_cut_shape_stats.copy()
 
     stat_df = pd.DataFrame(test_cut_shape_stats).T
 
