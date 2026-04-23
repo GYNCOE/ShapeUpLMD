@@ -316,7 +316,8 @@ def find_optimal_vertical_slice(polygon, cut_size, tests, minimum_shape_area, ma
 
         
         n_shapes = len(list(test_cut_multipolygon.geoms))
-        perfect_cut_area = test_cut_multipolygon.area/n_shapes
+        if n_shapes != 0: # sometimes there is no shape, not sure why
+            perfect_cut_area = test_cut_multipolygon.area/n_shapes
         diffs_from_perfect = []
         for cut_shape in list(test_cut_multipolygon.geoms):
             # skip shapes that are too small to cut/an unreasonable size # i think this was causing problems, we can deal with small shapes later
@@ -360,6 +361,10 @@ def find_optimal_vertical_slice(polygon, cut_size, tests, minimum_shape_area, ma
         cuts_still_being_considered = pd.DataFrame({0:{'area':0}}).T    
     best_cut_polygon['polygon'] = test_cut_polygons[to_keep]
     best_cut_polygon['stats'] = cuts_still_being_considered.loc[to_keep, ]
+
+    if isinstance(best_cut_polygon['polygon'], shapely.Polygon): # force polygon into multipolygon
+        best_cut_polygon['polygon'] = shapely.MultiPolygon([best_cut_polygon['polygon']])
+
     return best_cut_polygon
 
 def find_optimal_horizontal_slice(polygon, cut_size, tests, minimum_shape_area, maximum_shape_area, pbar=False, **kwargs):
@@ -411,7 +416,8 @@ def find_optimal_horizontal_slice(polygon, cut_size, tests, minimum_shape_area, 
 
         
         n_shapes = len(list(test_cut_multipolygon.geoms))
-        perfect_cut_area = test_cut_multipolygon.area/n_shapes
+        if n_shapes != 0: # sometimes there is no shape, not sure why
+            perfect_cut_area = test_cut_multipolygon.area/n_shapes
         diffs_from_perfect = []
         for cut_shape in list(test_cut_multipolygon.geoms):
             # skip shapes that are too small to cut/an unreasonable size # i think this was causing problems, we can deal with small shapes later
@@ -455,6 +461,10 @@ def find_optimal_horizontal_slice(polygon, cut_size, tests, minimum_shape_area, 
         cuts_still_being_considered = pd.DataFrame({0:{'area':0}}).T
     best_cut_polygon['polygon'] = test_cut_polygons[to_keep]
     best_cut_polygon['stats'] = cuts_still_being_considered.loc[to_keep, ]
+
+    if isinstance(best_cut_polygon['polygon'], shapely.Polygon): # force polygon into multipolygon
+        best_cut_polygon['polygon'] = shapely.MultiPolygon([best_cut_polygon['polygon']])
+
     return best_cut_polygon
 
 def find_best_slice(polygon, cut_size, tests, minimum_shape_area, maximum_shape_area, pbar=False, **kwargs):
