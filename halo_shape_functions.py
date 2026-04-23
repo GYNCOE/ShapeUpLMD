@@ -1,4 +1,4 @@
-__version__ = "1.0.0"
+__version__ = "0.1"
 
 import os
 
@@ -61,7 +61,9 @@ def convert_to_polygon_list(multipolygon, verbose: bool = False):
     elif isinstance(multipolygon, shapely.GeometryCollection): 
         ret = []
         for polygon in multipolygon.geoms:
-            ret.extend(convert_to_polygon_list(shapely.make_valid(polygon), verbose=verbose))
+            # multipolygon should only be made of polygons, but i'm checking anyways...
+            if isinstance(polygon, shapely.Polygon):
+                ret.extend(convert_to_polygon_list(shapely.make_valid(polygon), verbose=verbose))
     else:
         if verbose:
             print(f'Object is not a Polygon, MultiPolygon, or GeometryCollection! Returning empty list...\n\t`{type(multipolygon)=}`')
@@ -564,9 +566,11 @@ def get_all_intersections(geoseries: gpd.GeoSeries, verbose: bool = False):
     """
     intersections = []
     for geometry in geoseries.values:
+        geometry = make_valid(geometry) # might be removing chunks
         intersection = convert_to_polygon_list(geoseries.intersection(geometry).intersection_all(), verbose=verbose)
         for geom in intersection:
             intersections.append(geom)
+        intersections = list_of_shapes_to_polygons(intersections)
     return intersections
 
 def remove_thin_regions(shape: shapely.Polygon, cut_size: int | float, verbose: bool = False):
@@ -601,7 +605,8 @@ def remove_close_calls(shapes: shapely.MultiPolygon, cut_size: int | float):
     Returns a multipolygon (if provided a multipolygon..?).
     """
     shapes_gpd = gpd.GeoSeries(shapes.geoms)
-    intersections = gpd.GeoSeries(get_all_intersections(shapes_gpd.buffer(cut_size)))
+    #shapes_gpd = shapes_gpd.buffer(cut_size).make_valid() # larger chunks would be removed if the make_valid is called on the geoseries
+    intersections = gpd.GeoSeries(get_all_intersections(shapes_gpd))
     bs = shapes_gpd.buffer(cut_size)
 
     intersections = []
@@ -1020,212 +1025,6 @@ def read_imagescope_xml_annotations(xml_path: Path | str):
         regions_df = dict(regions_df)
         total_data_dict[annotation_layer_name] = regions_df
     return total_data_dict
-
-
-## commenting out for now
-# def make_shapes_lmdable_xml(image_location: str | Path,
-#                         collection_regions: MultiPolygon,
-#                         minimum_micrometers_squared: int = 10000,
-#                         maximum_micrometers_squared: int = 600*600,
-#                         minimum_micrometers_between_shapes: int = 60,
-#                         n_slices_to_check: int = 5,
-#                         verbose: int = True):
-#     """ Converts HALO regions into shapely shapes that can be exported to XML to cut on an LMD scope.
-
-#     Args:
-#         image_location (:class:`str` | :class:`pathlib.Path`):
-#             The image file location (specifically, the same file that HALO is using)
-#         collection_regions (:class:`MultiPolygon`):
-#             The regions to be prepared for LMD collection
-#         minimum_micrometers_squared (:class:`int`):
-#             Minimum size of an object to cut out, smaller sized objects are removed
-#         maximum_micrometers_squared (:class:`int`):
-#             Maximum size of an object to cut out, larger sized objects are sliced 
-#             into smaller ones
-#         minimum_micrometers_between_shapes (:class:`int`):
-#             The minimum distance between shapes. Anything too close will be shaved,
-#             and larger object slices will be separated with this distance
-#         n_slices_to_check (:class:`int`):
-#             The number of horizontal and vertical slice positions to check when
-#             deciding the most optimal
-#         verbose (:class:`int`):
-#             Whether or not to create progress bars and print status updates
-    
-#     Returns:
-#         :class:`shapely.MultiPolygon`:
-#             MultiPolygon filled with shapes that can be converted to XML for
-#             cutting on an LMD scope
-#     """
-#     if isinstance(image_location) == str:
-#         image_location = Path(image_location)
-#     assert image_location.exists(), f"Path {image_location=} does not exist!"
-#     # get mpp from image
-#     if verbose:
-#         print("reading in image with WSIReader (getting mpp)")
-#     wsi = WSIReader.open(image_location)
-#     mpp = wsi.info.as_dict()['mpp']
-#     assert mpp[0] == mpp[1], "x y mpp different, didn't account for this..."
-#     mpp = mpp[0]
-
-#     # get minimum shape areas in pixels
-#     minimum_shape_area = minimum_micrometers_squared/(mpp**2)
-#     maximum_shape_area = maximum_micrometers_squared/(mpp**2)
-
-#     # get slice/cut size
-#     cut_size = minimum_micrometers_between_shapes/2/mpp
-
-#     # get all the objects into a mask
-#     #polygons = []
-#     #cutouts = []
-#     # loop over polygons
-#     #for polygon_info in collection_regions:
-#         # pre_polygon = np.array(json.loads(polygon_info['geometry'])['coordinates'])
-#         # pre_polygon = np.vstack([pre_polygon, pre_polygon[0]]) # duplicate first point as the last point, making sure it's a closed object
-
-#         # polygon = shapely.Polygon(pre_polygon)
-#         # if not polygon_info['isExclusionRegion']:
-#         #     polygons.append(polygon)
-#         # else:
-#         #     cutouts.append(polygon)
-
-
-#     polygons_all = list(collection_regions.geoms)
-#     polygons = []
-#     cutouts = []
-    
-#     for poly in polygons_all:
-#         # Exterior polygon
-#         polygons.append(Polygon(poly.exterior))
-    
-#         # Interior (hole) polygons
-#         for interior in poly.interiors:
-#             # Make sure the hole is a valid polygon (must be closed ring with area)
-#             ring = LinearRing(interior)
-#             if ring.is_valid and not ring.is_empty:
-#                 cutouts.append(Polygon(ring))
-    
-#     # make connectors to cutouts
-#     polys = []
-#     for polygon in tqdm(polygons, desc="connectors", disable=not verbose):
-#         for cutout in cutouts:
-#             if polygon != cutout and polygon.intersects(cutout):
-#                 # fix polygon (cutting out region, but also connecting it to non-shape)
-#                 # figure out of polygon is a multipolygon
-#                 if type(polygon) != shapely.Polygon:
-#                     poly_list = []
-#                     for actual_polygon in tqdm(list(polygon.geoms), desc="connectors inner", disable=not verbose):
-#                         if type(actual_polygon) == shapely.LineString or type(actual_polygon) == shapely.Point:
-#                             # skip these
-#                             continue
-#                         # add a connector to the polygon
-#                         connector = shapely.LineString([[x for x in nearest_points(actual_polygon.exterior, cutout.centroid)][0], [x for x in cutout.centroid.coords][0]]).buffer(60/mpp, cap_style=3, join_style=3)
-#                         actual_polygon = actual_polygon.difference(unary_union([cutout, connector, nearest_points(actual_polygon.exterior, cutout.centroid)[0].buffer(75/mpp), cutout.centroid.buffer(75/mpp)]))
-#                         poly_list.append(actual_polygon)
-#                     polygon = unary_union(poly_list)
-#                 else:
-#                     # add a connector to the polygon
-#                     connector = shapely.LineString([[x for x in nearest_points(polygon.exterior, cutout.centroid)][0], [x for x in cutout.centroid.coords][0]]).buffer(60/mpp, cap_style=3, join_style=3)
-#                     polygon = polygon.difference(unary_union([cutout, connector, nearest_points(polygon.exterior, cutout.centroid)[0].buffer(75/mpp), cutout.centroid.buffer(75/mpp)]))
-#         polys.append(polygon)        
-        
-#     # fix multipolygons (in case there is multipolygon inception?)
-#     if verbose:
-#         print('fixing multipolygons')
-#     polys = list_of_shapes_to_polygons(polys, minimum_shape_area=minimum_shape_area)
-
-#     # simplify and smooth objects, splitting up objects that have tight regions between them
-#     simplified_polys = []
-#     for poly in tqdm(polys, desc="simplifying", disable=not verbose):
-#         #new_poly = hsf.simplify_and_smooth(shapely.make_valid(poly), thinness_distance=cut_size)
-#         new_poly = shapely.simplify(poly, 5)
-#         if type(new_poly) == shapely.MultiPolygon:
-#             for polyi in list(new_poly.geoms):
-#                 simplified_polys.append(polyi)
-#         else:
-#             simplified_polys.append(new_poly)
-
-#     # fix multipolygons (in case there is multipolygon inception?)
-#     if verbose:
-#         print('fixing multipolygons')
-#     simplified_polys = list_of_shapes_to_polygons(simplified_polys, minimum_shape_area=minimum_shape_area)
-
-#     # slice up polygons that are too large
-#     if verbose:
-#         print('slicing')
-#     # kwargs: mitre_distance=10, thinness_distance=25, first_simplify=5, second_simplify=3
-#     n_too_large = 0
-#     for simplified_poly in simplified_polys:
-#         if simplified_poly.area > maximum_shape_area:
-#             n_too_large = n_too_large + 1
-#     while n_too_large > 0:
-#         n_too_large = 0
-#         for simplified_poly in tqdm(simplified_polys.copy(), disable=not verbose):
-#             if simplified_poly.area > maximum_shape_area:
-#                 n_too_large = n_too_large + 1
-#                 simplified_polys.remove(simplified_poly)
-#                 simplified_poly = make_valid(simplified_poly) # make the polygon valid
-#                 # double checking for multipolygons/geometrycollections
-#                 temp_polygon_list = convert_to_polygon_list(simplified_poly)
-#                 sliced_polys = []
-#                 for simplified_poly_temp in temp_polygon_list:
-#                     sliced_poly = find_best_slice(simplified_poly_temp, cut_size=cut_size, tests=n_slices_to_check, minimum_shape_area=minimum_shape_area, maximum_shape_area=maximum_shape_area, 
-#                                                 thinness_distance=cut_size, mitre_distance=0, pbar=verbose)
-#                     sliced_polys.append(make_valid(sliced_poly))
-#                 # add polygons back to simplified_polys
-#                 simplified_polys.extend(sliced_polys)
-#         if verbose:
-#             print(f"{n_too_large=} remaining")
-
-
-#     # fix multipolygons
-#     if verbose:
-#         print('fixing multipolygons')
-#     simplified_polys = list_of_shapes_to_polygons(simplified_polys, minimum_shape_area=minimum_shape_area)
-
-
-#     # removing close calls
-#     if verbose:
-#         print('removing `close calls`')
-#     simplified_polys = remove_close_calls(shapely.make_valid(shapely.MultiPolygon(simplified_polys)), cut_size=cut_size)
-#     simplified_polys = convert_to_polygon_list(simplified_polys, verbose=verbose)
-
-#     # scrub cycle
-#     if verbose:
-#         print('shape scrub cycle')
-#     scrubbed_polys = []
-#     for poly in tqdm(simplified_polys, disable=not verbose):
-#         intermediately_scrubbed = []
-#         scrub_cycle(poly, cut_size=cut_size, final_shapes=intermediately_scrubbed)
-#         scrubbed_polys.extend(intermediately_scrubbed.copy())
-
-
-#     simplified_polys = scrubbed_polys.copy()
-
-#     # remove shapes that have been added that are too small
-#     for simplified_poly in tqdm(simplified_polys.copy(), desc="removing small shapes", disable=not verbose):
-#         if simplified_poly.area < minimum_shape_area:
-#             simplified_polys.remove(simplified_poly)
-
-#     # simplify and smooth objects, splitting up objects that have tight regions between them
-#     simplified_polys_again = []
-#     for poly in tqdm(simplified_polys, desc="simplifying", disable=not verbose):
-#         #new_poly = hsf.simplify_and_smooth(shapely.make_valid(poly), thinness_distance=cut_size)
-#         new_poly = shapely.simplify(poly, 5)
-#         if type(new_poly) == shapely.MultiPolygon:
-#             for polyi in list(new_poly.geoms):
-#                 simplified_polys_again.append(polyi)
-#         else:
-#             simplified_polys_again.append(new_poly)
-
-#     # fix multipolygons (in case there is multipolygon inception?)
-#     if verbose:
-#         print('fixing multipolygons')
-#     simplified_polys_again = list_of_shapes_to_polygons(simplified_polys_again, minimum_shape_area=minimum_shape_area)
-
-#     # make a valid multipolygon
-#     final_shapely_multipolygon = shapely.make_valid(shapely.MultiPolygon(simplified_polys_again))
-    
-#     return final_shapely_multipolygon
 
 
 def parse_annotation_file(layer, file):    
