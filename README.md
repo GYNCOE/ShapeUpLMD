@@ -38,6 +38,8 @@ Example expected structure
 
 ```
 ShapeUpLMD_demo.ipynb
+ShapeUpLMD_behavior.ipynb
+ShapeUpLMD_parameter-sweep.ipynb
 halo_shape_functions.py
 data/
     wsi_analysis_demo.svs
@@ -57,11 +59,11 @@ The targeted, spatially resolved ROI workflow returns XML exports for a custom n
 The first section of `ShapeUpLMD_demo.ipynb` goes through the following steps:  
 1. Load tumor tissue and calibration layers from HALO annotation files and convert them into shapely MultiPolygons.
 2. Display tumor and tissue masks so you can sanity check the inputs.
-3. Create LMD compatible shapes with `make_shapes_lmdable_xml` which slices large polygons into smaller pieces that fit typical LMD limits.
+3. Create LMD compatible shapes with `make_shapes_lmdable` which slices large polygons into smaller pieces that fit typical LMD limits.
 4. Plot these shapes on the tissue so you can see how they will be cut.
 5. Split tumor regions into spatial clusters using `spatial_segmentation_brute_force` controlled by your number of clusters and target area.
 6. Overlay the spatial map on a WSI crop for quick visual validation.
-7. Export XML files for each spatial region with `create_scope_xml2`.
+7. Export XML files for each spatial region with `create_scope_xml`.
 
 ## Unbiased Whole Tissue Workflow
 
